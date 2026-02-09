@@ -104,7 +104,7 @@ export default function TopBar({
         <div className="h-4 w-px" style={{ background: '#2e3245' }} />
         <span
           className="text-xs truncate max-w-md"
-          style={{ color: '#94a3b8', fontFamily: 'JetBrains Mono, monospace' }}
+          style={{ color: '#94a3b8' }}
           title={motion}
         >
           {motion}

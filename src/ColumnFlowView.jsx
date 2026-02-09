@@ -11,6 +11,7 @@ export default function ColumnFlowView({
   arguments: args,
   teamNames,
   onSubmitArgument,
+  onEditArg,
   pendingSuggestion,
   onConfirmSuggestion,
   onDismissSuggestion,
@@ -55,7 +56,6 @@ export default function ColumnFlowView({
 
   const handlePoiSelect = (speakerIdx) => {
     setPoiFrom(speakers[speakerIdx].role);
-    setShowPoiSelect(false);
     inputRef.current?.focus();
   };
 
@@ -83,7 +83,7 @@ export default function ColumnFlowView({
               isActive={idx === activeSpeaker}
               arguments={speakerArgs}
               allArgs={args}
-              onEditArg={(id, text) => {}}
+              onEditArg={onEditArg}
               inputRef={idx === activeSpeaker ? inputRef : null}
               onClick={() => onSetActiveSpeaker(idx)}
             />
@@ -105,8 +105,8 @@ export default function ColumnFlowView({
               style={{ borderColor: '#2e3245' }}
             >
               <div
-                className="text-xs font-bold"
-                style={{ fontFamily: 'JetBrains Mono, monospace', color: '#94a3b8' }}
+                className="text-xs font-bold tracking-wide"
+                style={{ color: '#94a3b8' }}
               >
                 Judge Notes
               </div>
@@ -119,7 +119,6 @@ export default function ColumnFlowView({
                   style={{
                     background: '#222533',
                     borderLeft: '3px solid #94a3b8',
-                    fontFamily: 'JetBrains Mono, monospace',
                     color: '#94a3b8',
                   }}
                 >
@@ -192,7 +191,6 @@ export default function ColumnFlowView({
             className="flex-1 bg-transparent outline-none text-sm"
             style={{
               color: '#e2e8f0',
-              fontFamily: 'JetBrains Mono, monospace',
             }}
           />
 

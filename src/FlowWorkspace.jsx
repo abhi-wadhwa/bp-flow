@@ -293,6 +293,7 @@ export default function FlowWorkspace({ config }) {
             arguments={args}
             teamNames={teamNames}
             onSubmitArgument={handleSubmitArgument}
+            onEditArg={handleEditArg}
             pendingSuggestion={pendingSuggestion}
             onConfirmSuggestion={handleConfirmSuggestion}
             onDismissSuggestion={handleDismissSuggestion}

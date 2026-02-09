@@ -28,7 +28,7 @@ export default function LandingScreen({ onStart }) {
         <div className="text-center mb-10">
           <h1
             className="text-5xl font-bold tracking-tight mb-2"
-            style={{ fontFamily: 'JetBrains Mono, monospace' }}
+            style={{ fontFamily: 'Inter, sans-serif', letterSpacing: '-0.02em' }}
           >
             British Parliamentary Flow
           </h1>
@@ -97,7 +97,6 @@ export default function LandingScreen({ onStart }) {
                   background: '#1a1d27',
                   borderColor: '#2e3245',
                   color: '#e2e8f0',
-                  fontFamily: 'JetBrains Mono, monospace',
                 }}
                 onFocus={e => e.target.style.borderColor = '#3B82F6'}
                 onBlur={e => e.target.style.borderColor = '#2e3245'}
@@ -123,7 +122,6 @@ export default function LandingScreen({ onStart }) {
                       background: '#1a1d27',
                       border: `1px solid ${TEAM_COLORS[team]}33`,
                       color: '#e2e8f0',
-                      fontFamily: 'JetBrains Mono, monospace',
                     }}
                     onFocus={e => e.target.style.borderColor = TEAM_COLORS[team]}
                     onBlur={e => e.target.style.borderColor = `${TEAM_COLORS[team]}33`}

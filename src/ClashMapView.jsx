@@ -369,7 +369,7 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                   y={30}
                   fill="#e2e8f0"
                   fontSize="10"
-                  fontFamily="JetBrains Mono, monospace"
+                  fontFamily="Inter, sans-serif"
                 >
                   {arg.text.length > 22 ? arg.text.slice(0, 22) + '...' : arg.text}
                 </text>
@@ -445,7 +445,6 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                 background: '#222533',
                 borderColor: '#2e3245',
                 color: '#e2e8f0',
-                fontFamily: 'JetBrains Mono, monospace',
               }}
               autoFocus
             />

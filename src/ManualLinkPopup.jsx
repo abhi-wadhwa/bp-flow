@@ -38,7 +38,7 @@ export default function ManualLinkPopup({ args, onSelect, onClose }) {
             onChange={e => setSearch(e.target.value)}
             placeholder="Search arguments to link to..."
             className="w-full bg-transparent outline-none text-sm"
-            style={{ color: '#e2e8f0', fontFamily: 'JetBrains Mono, monospace' }}
+            style={{ color: '#e2e8f0' }}
             onKeyDown={e => {
               if (e.key === 'Escape') onClose();
             }}
@@ -78,7 +78,7 @@ export default function ManualLinkPopup({ args, onSelect, onClose }) {
               </div>
               <div
                 className="text-xs"
-                style={{ color: '#e2e8f0', fontFamily: 'JetBrains Mono, monospace' }}
+                style={{ color: '#e2e8f0' }}
               >
                 {arg.text}
               </div>

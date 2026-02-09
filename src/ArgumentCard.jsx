@@ -42,7 +42,7 @@ export default function ArgumentCard({ arg, allArgs, onEdit, onRelink, onRetheme
           }}
           onBlur={handleEditSubmit}
           className="w-full bg-transparent outline-none text-xs"
-          style={{ color: '#e2e8f0', fontFamily: 'JetBrains Mono, monospace' }}
+          style={{ color: '#e2e8f0' }}
           autoFocus
         />
       ) : (
@@ -86,7 +86,7 @@ export default function ArgumentCard({ arg, allArgs, onEdit, onRelink, onRetheme
           {/* Argument text */}
           <div
             className="leading-relaxed"
-            style={{ fontFamily: 'JetBrains Mono, monospace', color: '#e2e8f0' }}
+            style={{ color: '#e2e8f0' }}
           >
             {arg.text}
           </div>

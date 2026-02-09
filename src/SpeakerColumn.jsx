@@ -45,8 +45,7 @@ export default function SpeakerColumn({
           />
           <div>
             <div
-              className="text-xs font-bold"
-              style={{ fontFamily: 'JetBrains Mono, monospace' }}
+              className="text-xs font-bold tracking-wide"
             >
               {speaker.role}
             </div>

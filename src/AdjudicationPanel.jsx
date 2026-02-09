@@ -148,7 +148,7 @@ export default function AdjudicationPanel({
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h2 className="text-xl font-bold" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+            <h2 className="text-xl font-bold" style={{ letterSpacing: '-0.02em' }}>
               Adjudication
             </h2>
             <p className="text-xs mt-1" style={{ color: '#94a3b8' }}>
@@ -302,7 +302,6 @@ export default function AdjudicationPanel({
                           background: '#1a1d27',
                           borderColor: '#2e3245',
                           color: '#e2e8f0',
-                          fontFamily: 'JetBrains Mono, monospace',
                         }}
                       />
                     </div>
@@ -335,7 +334,6 @@ export default function AdjudicationPanel({
                           style={{
                             background: '#1a1d27',
                             color: '#94a3b8',
-                            fontFamily: 'JetBrains Mono, monospace',
                             borderLeft: `2px solid ${TEAM_COLORS[team]}`,
                           }}
                         >

@@ -2,7 +2,7 @@
 
 @theme {
   --font-mono: 'JetBrains Mono', monospace;
-  --font-sans: 'DM Sans', sans-serif;
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
   --color-og: #3B82F6;
   --color-oo: #EF4444;
   --color-cg: #22C55E;
