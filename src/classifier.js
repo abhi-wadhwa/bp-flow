@@ -308,6 +308,132 @@ Speaker: ${speaker} (${team}), Speech #${speechNumber}`;
   }
 }
 
+// Detect if input is long enough to deconstruct
+export function shouldDeconstruct(text) {
+  const trimmed = text.trim();
+  if (trimmed.length < 150) return false;
+  // Count sentences (rough heuristic)
+  const sentences = trimmed.split(/[.!?]+/).filter(s => s.trim().length > 10);
+  return sentences.length >= 3;
+}
+
+// Deconstruct a speech/paragraph into structured arguments via Groq
+export async function deconstructSpeech(text, speaker, team, speechNumber, existingArgs, existingThemes) {
+  if (!GROQ_API_KEY) {
+    throw new Error('Groq API key required for deconstruction');
+  }
+
+  const argsSummary = existingArgs.slice(-20).map(a => ({
+    id: a.id,
+    text: a.claim || a.text,
+    speaker: a.speaker,
+    team: a.team,
+    theme: a.clashTheme,
+  }));
+
+  const hasContext = existingArgs.length > 0;
+  const hasThemes = existingThemes.length > 0;
+
+  const systemPrompt = `You are a debate flow analyst for British Parliamentary (BP) debate. Your job is to deconstruct a block of text from a speech into distinct, structured arguments.
+
+Each argument should have:
+- claim: The core assertion, rewritten to be TERSE and clear (max 15 words). Use flowing shorthand — capture the essence, not the exact words. Write like a judge scribbling notes fast.
+- mechanisms: Array of strings explaining WHY/HOW the claim works. Each mechanism should be terse (max 15 words). Only include if the speech actually provides reasoning for this claim.
+- impacts: Array of strings explaining WHAT HAPPENS as a result. Each impact should be terse (max 15 words). Only include if the speech actually states consequences.
+- clash_theme: A short label (2-5 words) for the topic area.${hasThemes ? ' Reuse existing themes where appropriate.' : ''}
+- is_refutation: true if this point is attacking an opponent's argument.
+- responds_to: If is_refutation is true, the "id" of the opponent argument being attacked. null otherwise. Only use IDs from the provided list.
+- rebuttal_target: "claim", "mechanism", or "impact" — what part is being attacked. null if not a refutation.
+
+IMPORTANT RULES:
+- Be TERSE. Each claim/mechanism/impact should be 5-15 words max. Think judge shorthand, not essay prose.
+- Rewrite freely for clarity — don't quote verbatim. Capture the logical structure, not the rhetoric.
+- Identify DISTINCT arguments — don't combine unrelated points into one.
+- A single paragraph might contain one claim with multiple mechanisms, or multiple separate claims.
+- Mechanisms explain causation. Impacts explain consequences/harms/benefits.
+- If text discusses the same topic but from two angles, those are two separate arguments.
+- Group mechanisms and impacts under their parent claim — don't make them separate arguments.
+- The speaker is on team "${team}".
+
+You MUST respond with valid JSON: {"points": [...]}. No markdown, no explanation.`;
+
+  let userPrompt = `SPEECH TEXT:\n"""${text}"""\n\nSpeaker: ${speaker} (${team}), Speech #${speechNumber}`;
+
+  if (hasThemes) {
+    userPrompt += `\n\nEXISTING THEMES: ${JSON.stringify(existingThemes)}`;
+  }
+
+  if (hasContext) {
+    userPrompt += `\n\nEXISTING ARGUMENTS (for responds_to references):\n${argsSummary.map(a => {
+      let line = `[id=${a.id}] ${a.speaker} (${a.team}): "${a.text}"`;
+      if (a.theme) line += ` [theme: ${a.theme}]`;
+      return line;
+    }).join('\n')}`;
+  }
+
+  userPrompt += `\n\nDeconstruct this speech into structured arguments. Respond with: {"points": [{"claim": "string", "mechanisms": ["string"], "impacts": ["string"], "clash_theme": "string", "is_refutation": boolean, "responds_to": "id_or_null", "rebuttal_target": "claim"|"mechanism"|"impact"|null}]}`;
+
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.15,
+      max_completion_tokens: 2000,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => '');
+    console.warn(`Groq API error ${response.status}:`, errBody);
+    throw new Error(`Groq API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const rawText = data.choices?.[0]?.message?.content || '';
+  const cleaned = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+  try {
+    const result = JSON.parse(cleaned);
+    const points = Array.isArray(result.points) ? result.points : [];
+
+    // Validate and clean each point
+    return points.map(p => {
+      const point = {
+        claim: String(p.claim || '').slice(0, 200),
+        mechanisms: Array.isArray(p.mechanisms) ? p.mechanisms.map(m => String(m).slice(0, 200)) : [],
+        impacts: Array.isArray(p.impacts) ? p.impacts.map(m => String(m).slice(0, 200)) : [],
+        clash_theme: p.clash_theme || null,
+        is_refutation: !!p.is_refutation,
+        responds_to: null,
+        rebuttal_target: null,
+      };
+
+      if (point.is_refutation && p.responds_to) {
+        const validId = existingArgs.some(a => a.id === String(p.responds_to));
+        if (validId) {
+          point.responds_to = String(p.responds_to);
+          const validTargets = ['claim', 'mechanism', 'impact'];
+          point.rebuttal_target = validTargets.includes(p.rebuttal_target) ? p.rebuttal_target : null;
+        }
+      }
+
+      return point;
+    }).filter(p => p.claim.trim().length > 0);
+  } catch (e) {
+    console.warn('Groq deconstruct parse error:', rawText, e);
+    throw new Error('Failed to parse deconstruction result');
+  }
+}
+
 export async function classifyArgument(text, speaker, team, speechNumber, existingArgs, existingThemes) {
   console.log('[classifier] classifyArgument called, GROQ_API_KEY present:', !!GROQ_API_KEY);
   if (GROQ_API_KEY) {

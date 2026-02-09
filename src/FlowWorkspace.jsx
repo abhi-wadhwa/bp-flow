@@ -5,7 +5,7 @@ import ClashMapView from './ClashMapView';
 import AdjudicationPanel from './AdjudicationPanel';
 import ExportModal from './ExportModal';
 import { useTimer } from './useTimer';
-import { heuristicClassify, classifyArgument } from './classifier';
+import { heuristicClassify, classifyArgument, shouldDeconstruct, deconstructSpeech } from './classifier';
 
 let nextArgId = 1;
 
@@ -17,20 +17,20 @@ export default function FlowWorkspace({ config }) {
   const [judgeNotes, setJudgeNotes] = useState([]);
   const [activeSpeaker, setActiveSpeaker] = useState(0);
   const [view, setView] = useState('columns'); // 'columns' | 'clashmap' | 'adjudication'
-  const [pendingInput, setPendingInput] = useState(null); // { text, speakerIndex, speaker, team, speechNumber, isPOI, poiFrom, isExtension, isWeighing }
+  const [pendingInput, setPendingInput] = useState(null);
   const [pendingSuggestion, setPendingSuggestion] = useState(null);
+  const [pendingBatch, setPendingBatch] = useState(null); // { points: [...], speaker, team, speakerIndex, speechNumber }
   const [classifying, setClassifying] = useState(false);
   const [showManualLink, setShowManualLink] = useState(false);
   const [manualLinkTarget, setManualLinkTarget] = useState(null);
-  const [inputMode, setInputMode] = useState(null); // 'poi' | 'extension' | 'weighing' | 'judge_note'
+  const [inputMode, setInputMode] = useState(null);
   const [showExport, setShowExport] = useState(false);
 
   const { getTimer, toggleTimer, resetTimer, pauseTimer } = useTimer();
 
-  // Get unique themes
   const existingThemes = [...new Set(args.map(a => a.clashTheme).filter(Boolean))];
 
-  // New classify-first input flow
+  // Main input handler — routes to single-point or batch deconstruction
   const handleSubmitInput = useCallback(async (inputData) => {
     if (inputData.isJudgeNote) {
       setJudgeNotes(prev => [...prev, {
@@ -54,16 +54,49 @@ export default function FlowWorkspace({ config }) {
       isWeighing: inputData.isWeighing || false,
     };
 
+    // Check if input is long enough to deconstruct
+    if (shouldDeconstruct(inputData.text)) {
+      setClassifying(true);
+      try {
+        const points = await deconstructSpeech(
+          inputData.text,
+          speaker.role,
+          speaker.team,
+          speaker.order,
+          args,
+          existingThemes
+        );
+        if (points.length > 0) {
+          setPendingBatch({
+            points,
+            speaker: speaker.role,
+            team: speaker.team,
+            speakerIndex: activeSpeaker,
+            speechNumber: speaker.order,
+            isPOI: pending.isPOI,
+            poiFrom: pending.poiFrom,
+            isExtension: pending.isExtension,
+            isWeighing: pending.isWeighing,
+          });
+          setClassifying(false);
+          return;
+        }
+      } catch (e) {
+        console.warn('[deconstruct] Failed, falling back to single-point:', e.message);
+      }
+      setClassifying(false);
+      // Fall through to single-point classification
+    }
+
+    // Single-point classification flow
     setPendingInput(pending);
     setClassifying(true);
 
-    // Run heuristic immediately for instant feedback
     const heuristicResult = heuristicClassify(
       inputData.text, args, existingThemes, speaker.team
     );
     setPendingSuggestion(heuristicResult);
 
-    // Auto-confirm high-confidence heuristic results
     if (heuristicResult.confidence >= 0.85) {
       applyClassification(pending, heuristicResult);
       setPendingInput(null);
@@ -72,7 +105,6 @@ export default function FlowWorkspace({ config }) {
       return;
     }
 
-    // Fire Groq request async
     try {
       const groqResult = await classifyArgument(
         inputData.text,
@@ -83,7 +115,6 @@ export default function FlowWorkspace({ config }) {
         existingThemes
       );
 
-      // Auto-confirm high-confidence Groq results
       if (groqResult.confidence >= 0.85) {
         applyClassification(pending, groqResult);
         setPendingInput(null);
@@ -92,16 +123,15 @@ export default function FlowWorkspace({ config }) {
         return;
       }
 
-      // Update popup with Groq result (better than heuristic)
       setPendingSuggestion(groqResult);
     } catch {
-      // Keep heuristic result on failure
+      // Keep heuristic result
     }
 
     setClassifying(false);
   }, [activeSpeaker, speakers, args, existingThemes]);
 
-  // Apply a classification result — dispatches based on argument_type
+  // Apply a single classification result
   const applyClassification = useCallback((input, suggestion) => {
     const argType = suggestion.argument_type || 'claim';
 
@@ -110,7 +140,6 @@ export default function FlowWorkspace({ config }) {
       const targetArg = targetId ? args.find(a => a.id === targetId) : null;
 
       if (targetArg) {
-        // Attach to existing argument
         const field = argType === 'mechanism' ? 'mechanisms' : 'impacts';
         setArgs(prev => prev.map(a =>
           a.id === targetId
@@ -119,12 +148,11 @@ export default function FlowWorkspace({ config }) {
         ));
         return;
       }
-      // Fallback: no valid target, create as claim
     }
 
     if (argType === 'refutation') {
       const id = String(nextArgId++);
-      const newArg = {
+      setArgs(prev => [...prev, {
         id,
         text: input.text,
         claim: input.text,
@@ -144,14 +172,12 @@ export default function FlowWorkspace({ config }) {
         clashTheme: suggestion.clash_theme || null,
         respondsTo: suggestion.responds_to || null,
         timestamp: Date.now(),
-      };
-      setArgs(prev => [...prev, newArg]);
+      }]);
       return;
     }
 
-    // Default: create as new claim
     const id = String(nextArgId++);
-    const newArg = {
+    setArgs(prev => [...prev, {
       id,
       text: input.text,
       claim: input.text,
@@ -171,9 +197,64 @@ export default function FlowWorkspace({ config }) {
       clashTheme: suggestion.clash_theme || null,
       respondsTo: null,
       timestamp: Date.now(),
-    };
-    setArgs(prev => [...prev, newArg]);
+    }]);
   }, [args]);
+
+  // Confirm a batch of deconstructed points
+  const handleConfirmBatch = useCallback(() => {
+    if (!pendingBatch) return;
+    const { points, speaker, team, speakerIndex, speechNumber, isPOI, poiFrom, isExtension, isWeighing } = pendingBatch;
+
+    const newArgs = points.map(point => {
+      const id = String(nextArgId++);
+      return {
+        id,
+        text: point.claim,
+        claim: point.claim,
+        mechanisms: point.mechanisms || [],
+        impacts: point.impacts || [],
+        refutations: [],
+        rebuttalTarget: point.rebuttal_target || null,
+        speaker,
+        team,
+        speakerIndex,
+        speechNumber,
+        isPOI,
+        poiFrom,
+        isExtension,
+        isWeighing,
+        isJudgeNote: false,
+        clashTheme: point.clash_theme || null,
+        respondsTo: point.responds_to || null,
+        timestamp: Date.now(),
+      };
+    });
+
+    setArgs(prev => [...prev, ...newArgs]);
+    setPendingBatch(null);
+  }, [pendingBatch]);
+
+  const handleDismissBatch = useCallback(() => {
+    setPendingBatch(null);
+  }, []);
+
+  const handleRemoveBatchPoint = useCallback((idx) => {
+    setPendingBatch(prev => {
+      if (!prev) return null;
+      const newPoints = prev.points.filter((_, i) => i !== idx);
+      if (newPoints.length === 0) return null;
+      return { ...prev, points: newPoints };
+    });
+  }, []);
+
+  const handleEditBatchPoint = useCallback((idx, field, value) => {
+    setPendingBatch(prev => {
+      if (!prev) return prev;
+      const newPoints = [...prev.points];
+      newPoints[idx] = { ...newPoints[idx], [field]: value };
+      return { ...prev, points: newPoints };
+    });
+  }, []);
 
   const handleConfirmSuggestion = useCallback(() => {
     if (!pendingSuggestion || !pendingInput) return;
@@ -184,7 +265,6 @@ export default function FlowWorkspace({ config }) {
 
   const handleDismissSuggestion = useCallback(() => {
     if (!pendingInput) return;
-    // Dismiss always creates as new claim
     applyClassification(pendingInput, {
       argument_type: 'claim',
       clash_theme: pendingSuggestion?.clash_theme || null,
@@ -202,7 +282,6 @@ export default function FlowWorkspace({ config }) {
     const speaker = speakers[pendingInput.speakerIndex];
     const updated = { ...pendingSuggestion, argument_type: newType };
 
-    // Adjust belongs_to / responds_to for consistency
     if (newType === 'claim') {
       updated.belongs_to = null;
       updated.responds_to = null;
@@ -210,7 +289,6 @@ export default function FlowWorkspace({ config }) {
     } else if (newType === 'mechanism' || newType === 'impact') {
       updated.responds_to = null;
       updated.rebuttal_target = null;
-      // Find a same-team claim if no belongs_to
       if (!updated.belongs_to) {
         for (let i = args.length - 1; i >= 0; i--) {
           if (args[i].team === speaker.team && !args[i].isJudgeNote && !args[i].isPOI) {
@@ -221,7 +299,6 @@ export default function FlowWorkspace({ config }) {
       }
     } else if (newType === 'refutation') {
       updated.belongs_to = null;
-      // Keep responds_to if set, otherwise user can use manual link
       if (!updated.responds_to) {
         updated.rebuttal_target = null;
       }
@@ -232,7 +309,6 @@ export default function FlowWorkspace({ config }) {
 
   const handleManualLink = useCallback(() => {
     setShowManualLink(true);
-    // ManualLinkTarget is null — we're linking the pending input
   }, []);
 
   const handleSelectLink = useCallback((targetArgId) => {
@@ -253,7 +329,6 @@ export default function FlowWorkspace({ config }) {
           clash_theme: prev.clash_theme || targetArg?.clashTheme || null,
         }));
       } else {
-        // Claim — set as responds_to (turn it into a response)
         setPendingSuggestion(prev => ({
           ...prev,
           argument_type: 'refutation',
@@ -263,7 +338,6 @@ export default function FlowWorkspace({ config }) {
         }));
       }
     } else if (manualLinkTarget) {
-      // Re-linking an existing arg (from clash map)
       const targetArg = args.find(a => a.id === targetArgId);
       setArgs(prev => prev.map(a =>
         a.id === manualLinkTarget
@@ -316,6 +390,10 @@ export default function FlowWorkspace({ config }) {
       }
 
       if (e.key === 'Escape') {
+        if (pendingBatch) {
+          handleDismissBatch();
+          return;
+        }
         if (pendingSuggestion) {
           handleDismissSuggestion();
         }
@@ -332,8 +410,8 @@ export default function FlowWorkspace({ config }) {
         return;
       }
 
-      // Type override shortcuts when popup is visible
-      if (pendingSuggestion && tag !== 'INPUT' && tag !== 'TEXTAREA') {
+      // Type override shortcuts when single-point popup is visible
+      if (pendingSuggestion && !pendingBatch && tag !== 'INPUT' && tag !== 'TEXTAREA') {
         const typeMap = { c: 'claim', m: 'mechanism', i: 'impact', r: 'refutation' };
         const overrideType = typeMap[e.key.toLowerCase()];
         if (overrideType && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -343,7 +421,6 @@ export default function FlowWorkspace({ config }) {
         }
       }
 
-      // Meta/Cmd shortcuts
       if (e.metaKey || e.ctrlKey) {
         switch (e.key.toLowerCase()) {
           case 'j':
@@ -367,7 +444,6 @@ export default function FlowWorkspace({ config }) {
             if (pendingSuggestion) {
               handleManualLink();
             } else {
-              // Link the most recent arg
               const lastArg = args[args.length - 1];
               if (lastArg) {
                 setManualLinkTarget(lastArg.id);
@@ -391,19 +467,27 @@ export default function FlowWorkspace({ config }) {
         }
       }
 
-      // Enter to confirm suggestion
-      if (e.key === 'Enter' && pendingSuggestion && tag !== 'INPUT' && tag !== 'TEXTAREA') {
-        e.preventDefault();
-        handleConfirmSuggestion();
+      // Enter to confirm
+      if (e.key === 'Enter' && tag !== 'INPUT' && tag !== 'TEXTAREA') {
+        if (pendingBatch) {
+          e.preventDefault();
+          handleConfirmBatch();
+          return;
+        }
+        if (pendingSuggestion) {
+          e.preventDefault();
+          handleConfirmSuggestion();
+        }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [
-    activeSpeaker, speakers.length, pendingSuggestion, showManualLink,
+    activeSpeaker, speakers.length, pendingSuggestion, pendingBatch, showManualLink,
     inputMode, showExport, args, pauseTimer, toggleTimer,
-    handleConfirmSuggestion, handleDismissSuggestion, handleManualLink, handleOverrideType,
+    handleConfirmSuggestion, handleDismissSuggestion, handleConfirmBatch, handleDismissBatch,
+    handleManualLink, handleOverrideType,
   ]);
 
   if (view === 'adjudication') {
@@ -458,6 +542,11 @@ export default function FlowWorkspace({ config }) {
             onClearInputMode={() => setInputMode(null)}
             judgeNotes={judgeNotes}
             pendingInputType={pendingSuggestion?.argument_type || null}
+            pendingBatch={pendingBatch}
+            onConfirmBatch={handleConfirmBatch}
+            onDismissBatch={handleDismissBatch}
+            onRemoveBatchPoint={handleRemoveBatchPoint}
+            onEditBatchPoint={handleEditBatchPoint}
           />
         ) : (
           <ClashMapView

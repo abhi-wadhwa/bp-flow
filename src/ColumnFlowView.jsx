@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import SpeakerColumn from './SpeakerColumn';
 import AIClassificationPopup from './AIClassificationPopup';
+import BatchPreviewPopup from './BatchPreviewPopup';
 import ManualLinkPopup from './ManualLinkPopup';
 import { TEAM_COLORS } from './constants';
 
@@ -26,6 +27,11 @@ export default function ColumnFlowView({
   onClearInputMode,
   judgeNotes,
   pendingInputType,
+  pendingBatch,
+  onConfirmBatch,
+  onDismissBatch,
+  onRemoveBatchPoint,
+  onEditBatchPoint,
 }) {
   const [inputText, setInputText] = useState('');
   const [poiFrom, setPoiFrom] = useState(null);
@@ -33,11 +39,13 @@ export default function ColumnFlowView({
 
   const inputRef = useRef(null);
 
+  const hasPending = !!pendingSuggestion || !!pendingBatch;
+
   useEffect(() => {
-    if (!showManualLink && !showPoiSelect) {
+    if (!showManualLink && !showPoiSelect && !pendingBatch) {
       inputRef.current?.focus();
     }
-  }, [activeSpeaker, showManualLink, showPoiSelect, pendingSuggestion]);
+  }, [activeSpeaker, showManualLink, showPoiSelect, pendingSuggestion, pendingBatch]);
 
   const handleSubmit = (e) => {
     if (e) e.preventDefault();
@@ -149,8 +157,24 @@ export default function ColumnFlowView({
           </div>
         </div>
 
-        {/* AI Classification Popup */}
-        {pendingSuggestion && (
+        {/* Batch preview popup */}
+        {pendingBatch && (
+          <div className="flex-shrink-0">
+            <BatchPreviewPopup
+              points={pendingBatch.points}
+              speaker={pendingBatch.speaker}
+              team={pendingBatch.team}
+              allArgs={args}
+              onConfirm={onConfirmBatch}
+              onDismiss={onDismissBatch}
+              onRemovePoint={onRemoveBatchPoint}
+              onEditPoint={onEditBatchPoint}
+            />
+          </div>
+        )}
+
+        {/* AI Classification Popup (single point) */}
+        {pendingSuggestion && !pendingBatch && (
           <div className="flex-shrink-0">
             <AIClassificationPopup
               suggestion={pendingSuggestion}
@@ -166,11 +190,11 @@ export default function ColumnFlowView({
 
         {/* Input area */}
         <div className="flex-1 overflow-y-auto px-4 py-3">
-          {/* Classifying indicator */}
+          {/* Classifying / deconstructing indicator */}
           {classifying && (
             <div className="flex items-center gap-2 mb-2 text-[10px]" style={{ color: '#94a3b8' }}>
               <span className="inline-block w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
-              Classifying...
+              {pendingBatch ? 'Deconstructing...' : 'Classifying...'}
             </div>
           )}
 
@@ -187,33 +211,44 @@ export default function ColumnFlowView({
                     onConfirmSuggestion();
                     return;
                   }
+                  if (pendingBatch && !inputText.trim()) {
+                    e.preventDefault();
+                    onConfirmBatch();
+                    return;
+                  }
                   if (inputText.trim()) {
                     e.preventDefault();
                     handleSubmit();
                   }
                 }
                 if (e.key === 'Escape') {
-                  if (pendingSuggestion) {
+                  if (pendingBatch) {
+                    e.preventDefault();
+                    onDismissBatch();
+                  } else if (pendingSuggestion) {
                     e.preventDefault();
                     onDismissSuggestion();
                   }
                 }
               }}
               placeholder={
-                pendingSuggestion
+                pendingBatch
+                  ? 'Enter=apply all  Esc=dismiss'
+                  : pendingSuggestion
                   ? 'Enter=confirm  Esc=dismiss  ⌘K=link  C/M/I/R=override'
                   : inputMode === 'judge_note'
                   ? 'Private judge note...'
-                  : 'Type a point and press Enter — AI will classify it'
+                  : 'Type a point and press Enter — or paste a speech to deconstruct'
               }
               className="w-full rounded-lg px-3 py-2.5 text-sm outline-none resize-none border transition-colors"
               style={{
                 background: '#222533',
                 color: '#e2e8f0',
-                borderColor: pendingSuggestion ? '#22C55E55' : '#2e3245',
+                borderColor: pendingBatch ? '#3B82F655' : pendingSuggestion ? '#22C55E55' : '#2e3245',
                 minHeight: '88px',
               }}
               rows={4}
+              disabled={!!pendingBatch}
             />
           </div>
 
@@ -241,9 +276,10 @@ export default function ColumnFlowView({
           )}
 
           {/* Hint text */}
-          {!pendingSuggestion && !classifying && (
+          {!hasPending && !classifying && (
             <div className="mt-3 text-[10px] leading-relaxed" style={{ color: '#4a5568' }}>
-              <div>Type any point — the AI will determine if it's a claim, mechanism, impact, or refutation.</div>
+              <div>Type a point — AI classifies as claim, mechanism, impact, or refutation.</div>
+              <div className="mt-0.5">Paste a long speech — AI deconstructs it into structured arguments.</div>
               <div className="mt-1">Use <span style={{ color: '#64748b' }}>⌘P</span> for POI, <span style={{ color: '#64748b' }}>⌘W</span> for weighing, <span style={{ color: '#64748b' }}>⌘E</span> for extension.</div>
             </div>
           )}
@@ -252,21 +288,25 @@ export default function ColumnFlowView({
         {/* Submit bar */}
         <div className="px-4 py-2.5 border-t flex-shrink-0 flex items-center justify-between" style={{ borderColor: '#2e3245' }}>
           <span className="text-[10px]" style={{ color: '#64748b' }}>
-            {pendingSuggestion
+            {pendingBatch
+              ? '↵ apply all · esc dismiss'
+              : pendingSuggestion
               ? '↵ confirm · esc dismiss · ⌘K link'
               : '↵ submit · tab next speaker'
             }
           </span>
           <button
-            onClick={handleSubmit}
-            disabled={!inputText.trim() || !!pendingSuggestion}
+            onClick={pendingBatch ? onConfirmBatch : handleSubmit}
+            disabled={pendingBatch ? false : (!inputText.trim() || !!pendingSuggestion)}
             className="px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-colors"
             style={{
-              background: inputText.trim() && !pendingSuggestion ? `${color}33` : '#2e3245',
-              color: inputText.trim() && !pendingSuggestion ? color : '#64748b',
+              background: pendingBatch ? '#22C55E33'
+                : inputText.trim() && !pendingSuggestion ? `${color}33` : '#2e3245',
+              color: pendingBatch ? '#22C55E'
+                : inputText.trim() && !pendingSuggestion ? color : '#64748b',
             }}
           >
-            Submit
+            {pendingBatch ? 'Apply All' : 'Submit'}
           </button>
         </div>
       </div>
