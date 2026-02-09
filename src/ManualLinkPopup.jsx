@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { TEAM_COLORS } from './constants';
+import { TEAM_COLORS, REBUTTAL_COLORS } from './constants';
 
 export default function ManualLinkPopup({ args, onSelect, onClose }) {
   const [search, setSearch] = useState('');
@@ -11,8 +11,9 @@ export default function ManualLinkPopup({ args, onSelect, onClose }) {
 
   const filtered = args.filter(a => {
     const q = search.toLowerCase();
+    const text = (a.claim || a.text).toLowerCase();
     return (
-      a.text.toLowerCase().includes(q) ||
+      text.includes(q) ||
       a.speaker.toLowerCase().includes(q) ||
       a.team.toLowerCase().includes(q) ||
       (a.clashTheme && a.clashTheme.toLowerCase().includes(q))
@@ -75,12 +76,27 @@ export default function ManualLinkPopup({ args, onSelect, onClose }) {
                     {arg.clashTheme}
                   </span>
                 )}
+                {/* Structure indicators */}
+                {arg.mechanism && (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{ background: REBUTTAL_COLORS.mechanism }}
+                    title="Has mechanism"
+                  />
+                )}
+                {arg.impact && (
+                  <span
+                    className="w-1.5 h-1.5 rounded-full"
+                    style={{ background: REBUTTAL_COLORS.impact }}
+                    title="Has impact"
+                  />
+                )}
               </div>
               <div
                 className="text-xs"
                 style={{ color: '#e2e8f0' }}
               >
-                {arg.text}
+                {arg.claim || arg.text}
               </div>
             </button>
           ))}

@@ -1,4 +1,4 @@
-import { TEAM_COLORS } from './constants';
+import { TEAM_COLORS, REBUTTAL_COLORS } from './constants';
 
 export default function AIClassificationPopup({
   suggestion,
@@ -12,6 +12,10 @@ export default function AIClassificationPopup({
   const respondedArg = suggestion.responds_to
     ? allArgs.find(a => a.id === suggestion.responds_to)
     : null;
+
+  const rebuttalTarget = suggestion.rebuttal_target;
+  const targetColor = rebuttalTarget ? REBUTTAL_COLORS[rebuttalTarget] : null;
+  const targetLabel = rebuttalTarget ? rebuttalTarget.toUpperCase() : null;
 
   return (
     <div
@@ -46,9 +50,22 @@ export default function AIClassificationPopup({
       )}
 
       {respondedArg && (
-        <div className="mb-1.5" style={{ color: '#e2e8f0' }}>
+        <div className="mb-1" style={{ color: '#e2e8f0' }}>
           <span style={{ color: TEAM_COLORS[respondedArg.team] }}>&#8627;</span>{' '}
-          responds to {respondedArg.speaker}: "{respondedArg.text.slice(0, 50)}..."
+          responds to {respondedArg.speaker}: "{(respondedArg.claim || respondedArg.text).slice(0, 50)}..."
+        </div>
+      )}
+
+      {/* Rebuttal target indicator */}
+      {targetLabel && respondedArg && (
+        <div className="mb-1.5 flex items-center gap-1.5">
+          <span className="text-[10px]" style={{ color: '#94a3b8' }}>Targets:</span>
+          <span
+            className="text-[10px] font-semibold px-1.5 py-0.5 rounded"
+            style={{ color: targetColor, background: `${targetColor}22` }}
+          >
+            {targetLabel}
+          </span>
         </div>
       )}
 

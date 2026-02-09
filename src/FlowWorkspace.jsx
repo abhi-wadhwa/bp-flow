@@ -45,6 +45,10 @@ export default function FlowWorkspace({ config }) {
     const newArg = {
       id,
       text: argData.text,
+      claim: argData.text,
+      mechanism: null,
+      impact: null,
+      rebuttalTarget: null,
       speaker: speaker.role,
       team: speaker.team,
       speakerIndex: activeSpeaker,
@@ -95,6 +99,7 @@ export default function FlowWorkspace({ config }) {
             ...a,
             clashTheme: pendingSuggestion.clash_theme || a.clashTheme,
             respondsTo: pendingSuggestion.responds_to || a.respondsTo,
+            rebuttalTarget: pendingSuggestion.rebuttal_target || a.rebuttalTarget,
           }
         : a
     ));
@@ -142,8 +147,20 @@ export default function FlowWorkspace({ config }) {
 
   const handleEditArg = useCallback((id, newText) => {
     setArgs(prev => prev.map(a =>
-      a.id === id ? { ...a, text: newText } : a
+      a.id === id ? { ...a, text: newText, claim: newText } : a
     ));
+  }, []);
+
+  const handleAnnotateArg = useCallback((field, text) => {
+    // Annotate the most recent non-judge-note argument
+    setArgs(prev => {
+      const lastIdx = [...prev].reverse().findIndex(a => !a.isJudgeNote);
+      if (lastIdx === -1) return prev;
+      const idx = prev.length - 1 - lastIdx;
+      return prev.map((a, i) =>
+        i === idx ? { ...a, [field]: text } : a
+      );
+    });
   }, []);
 
   const handleRetheme = useCallback((oldTheme, newTheme) => {
@@ -202,6 +219,14 @@ export default function FlowWorkspace({ config }) {
           case 'p':
             e.preventDefault();
             setInputMode(prev => prev === 'poi' ? null : 'poi');
+            break;
+          case 'm':
+            e.preventDefault();
+            setInputMode(prev => prev === 'mechanism' ? null : 'mechanism');
+            break;
+          case 'i':
+            e.preventDefault();
+            setInputMode(prev => prev === 'impact' ? null : 'impact');
             break;
           case 'w':
             e.preventDefault();
@@ -294,6 +319,7 @@ export default function FlowWorkspace({ config }) {
             teamNames={teamNames}
             onSubmitArgument={handleSubmitArgument}
             onEditArg={handleEditArg}
+            onAnnotateLastArg={handleAnnotateArg}
             pendingSuggestion={pendingSuggestion}
             onConfirmSuggestion={handleConfirmSuggestion}
             onDismissSuggestion={handleDismissSuggestion}

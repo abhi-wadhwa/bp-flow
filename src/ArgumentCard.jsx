@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { TEAM_COLORS } from './constants';
+import { TEAM_COLORS, REBUTTAL_COLORS } from './constants';
 
 export default function ArgumentCard({ arg, allArgs, onEdit, onRelink, onRetheme }) {
   const [editing, setEditing] = useState(false);
-  const [editText, setEditText] = useState(arg.text);
+  const [editText, setEditText] = useState(arg.claim || arg.text);
   const color = TEAM_COLORS[arg.team];
 
   const respondedArg = arg.respondsTo
@@ -12,15 +12,24 @@ export default function ArgumentCard({ arg, allArgs, onEdit, onRelink, onRetheme
 
   const handleDoubleClick = () => {
     setEditing(true);
-    setEditText(arg.text);
+    setEditText(arg.claim || arg.text);
   };
 
   const handleEditSubmit = () => {
-    if (editText.trim() && editText.trim() !== arg.text) {
-      onEdit(arg.id, editText.trim());
+    const trimmed = editText.trim();
+    if (trimmed && trimmed !== (arg.claim || arg.text)) {
+      onEdit(arg.id, trimmed);
     }
     setEditing(false);
   };
+
+  // Determine rebuttal target label and color
+  const rebuttalTargetLabel = arg.rebuttalTarget
+    ? arg.rebuttalTarget.toUpperCase()
+    : null;
+  const rebuttalTargetColor = arg.rebuttalTarget
+    ? REBUTTAL_COLORS[arg.rebuttalTarget] || REBUTTAL_COLORS.claim
+    : null;
 
   return (
     <div
@@ -83,22 +92,57 @@ export default function ArgumentCard({ arg, allArgs, onEdit, onRelink, onRetheme
             )}
           </div>
 
-          {/* Argument text */}
+          {/* Claim text (main) */}
           <div
             className="leading-relaxed"
             style={{ color: '#e2e8f0' }}
           >
-            {arg.text}
+            {arg.claim || arg.text}
           </div>
+
+          {/* Mechanism */}
+          {arg.mechanism && (
+            <div
+              className="mt-1 leading-relaxed text-[11px]"
+              style={{ color: REBUTTAL_COLORS.mechanism }}
+            >
+              <span className="font-semibold">M:</span> {arg.mechanism}
+            </div>
+          )}
+
+          {/* Impact */}
+          {arg.impact && (
+            <div
+              className="mt-0.5 leading-relaxed text-[11px]"
+              style={{ color: REBUTTAL_COLORS.impact }}
+            >
+              <span className="font-semibold">I:</span> {arg.impact}
+            </div>
+          )}
 
           {/* Response link */}
           {respondedArg && (
             <div
-              className="mt-1 text-[10px] flex items-center gap-1"
+              className="mt-1 text-[10px] flex items-center gap-1 flex-wrap"
               style={{ color: '#94a3b8' }}
             >
               <span style={{ color: TEAM_COLORS[respondedArg.team] }}>&#8627;</span>
-              resp to {respondedArg.speaker}: "{respondedArg.text.slice(0, 40)}{respondedArg.text.length > 40 ? '...' : ''}"
+              {rebuttalTargetLabel ? (
+                <>
+                  attacks{' '}
+                  <span
+                    className="font-semibold px-1 py-0.5 rounded"
+                    style={{ color: rebuttalTargetColor, background: `${rebuttalTargetColor}22` }}
+                  >
+                    {rebuttalTargetLabel}
+                  </span>
+                  {' '}of {respondedArg.speaker}
+                </>
+              ) : (
+                <>
+                  resp to {respondedArg.speaker}: "{(respondedArg.claim || respondedArg.text).slice(0, 40)}{(respondedArg.claim || respondedArg.text).length > 40 ? '...' : ''}"
+                </>
+              )}
             </div>
           )}
 

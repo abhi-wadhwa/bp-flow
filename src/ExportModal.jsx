@@ -16,14 +16,28 @@ function generateFlowText(args, speakers, motion, teamNames) {
       if (arg.isExtension) line += '[EXT] ';
       if (arg.isWeighing) line += '[WEIGH] ';
       if (arg.clashTheme) line += `(${arg.clashTheme}) `;
-      line += arg.text;
+      line += arg.claim || arg.text;
+
       if (arg.respondsTo) {
         const target = args.find(a => a.id === arg.respondsTo);
         if (target) {
-          line += ` [resp to ${target.speaker}: "${target.text.slice(0, 30)}..."]`;
+          const targetText = target.claim || target.text;
+          let linkNote = `resp to ${target.speaker}: "${targetText.slice(0, 30)}..."`;
+          if (arg.rebuttalTarget) {
+            linkNote = `attacks ${arg.rebuttalTarget.toUpperCase()} of ${target.speaker}: "${targetText.slice(0, 30)}..."`;
+          }
+          line += ` [${linkNote}]`;
         }
       }
       text += line + '\n';
+
+      // Structured sub-lines for mechanism and impact
+      if (arg.mechanism) {
+        text += `    M: ${arg.mechanism}\n`;
+      }
+      if (arg.impact) {
+        text += `    I: ${arg.impact}\n`;
+      }
     }
     text += '\n';
   }

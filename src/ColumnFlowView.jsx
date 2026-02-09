@@ -12,6 +12,7 @@ export default function ColumnFlowView({
   teamNames,
   onSubmitArgument,
   onEditArg,
+  onAnnotateLastArg,
   pendingSuggestion,
   onConfirmSuggestion,
   onDismissSuggestion,
@@ -39,6 +40,14 @@ export default function ColumnFlowView({
     const text = inputText.trim();
     if (!text) return;
 
+    // Mechanism/impact annotation mode → annotate last arg
+    if (inputMode === 'mechanism' || inputMode === 'impact') {
+      onAnnotateLastArg(inputMode, text);
+      setInputText('');
+      onClearInputMode();
+      return;
+    }
+
     const argData = {
       text,
       isPOI: inputMode === 'poi',
@@ -65,9 +74,16 @@ export default function ColumnFlowView({
   // Get mode label
   let modeLabel = null;
   if (inputMode === 'poi') modeLabel = { text: 'POI', color: '#F59E0B', bg: '#F59E0B33' };
+  if (inputMode === 'mechanism') modeLabel = { text: 'MECH', color: '#10B981', bg: '#10B98133' };
+  if (inputMode === 'impact') modeLabel = { text: 'IMPACT', color: '#F43F5E', bg: '#F43F5E33' };
   if (inputMode === 'extension') modeLabel = { text: 'EXT', color: '#8B5CF6', bg: '#8B5CF633' };
   if (inputMode === 'weighing') modeLabel = { text: 'WEIGH', color: '#06B6D4', bg: '#06B6D433' };
   if (inputMode === 'judge_note') modeLabel = { text: 'NOTE', color: '#94a3b8', bg: '#94a3b833' };
+
+  // Get last non-judge-note argument for annotation preview
+  const lastArg = (inputMode === 'mechanism' || inputMode === 'impact')
+    ? [...args].reverse().find(a => !a.isJudgeNote)
+    : null;
 
   return (
     <div className="flex flex-col h-full">
@@ -186,6 +202,10 @@ export default function ColumnFlowView({
                 ? 'Private judge note...'
                 : inputMode === 'weighing'
                 ? 'e.g., OG econ > OO rights because...'
+                : inputMode === 'mechanism'
+                ? 'Why/how does the claim work?'
+                : inputMode === 'impact'
+                ? 'What happens as a result?'
                 : `Flow ${speaker.role}...`
             }
             className="flex-1 bg-transparent outline-none text-sm"
@@ -199,6 +219,17 @@ export default function ColumnFlowView({
             Enter to submit
           </span>
         </form>
+
+        {/* Annotation preview for mechanism/impact */}
+        {lastArg && (
+          <div
+            className="mt-1.5 px-2 py-1.5 rounded-lg text-[10px]"
+            style={{ background: '#222533', color: '#94a3b8' }}
+          >
+            Annotating: <span style={{ color: '#e2e8f0' }}>"{(lastArg.claim || lastArg.text).slice(0, 60)}{(lastArg.claim || lastArg.text).length > 60 ? '...' : ''}"</span>{' '}
+            <span style={{ color: TEAM_COLORS[lastArg.team] }}>({lastArg.speaker})</span>
+          </div>
+        )}
 
         {/* POI speaker select */}
         {showPoiSelect && (

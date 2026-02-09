@@ -34,6 +34,8 @@ export const SHORTCUTS = [
   { keys: 'Tab', action: 'Next speaker' },
   { keys: 'Shift+Tab', action: 'Previous speaker' },
   { keys: '⌘+P', action: 'POI mode' },
+  { keys: '⌘+M', action: 'Annotate mechanism' },
+  { keys: '⌘+I', action: 'Annotate impact' },
   { keys: '⌘+W', action: 'Weighing note' },
   { keys: '⌘+E', action: 'Extension marker' },
   { keys: '⌘+K', action: 'Manual link' },
@@ -44,8 +46,28 @@ export const SHORTCUTS = [
   { keys: 'Esc', action: 'Dismiss/cancel' },
 ];
 
+export const REBUTTAL_COLORS = {
+  claim: '#94a3b8',
+  mechanism: '#10B981',
+  impact: '#F43F5E',
+};
+
 export const RESPONSE_KEYWORDS = [
   'resp', 'rebut', 'even if', 'on that', 'turns', 'on their',
   'counter', 'but', 'however', 'against', 'response', 'reply',
   'refute', 'deny', 'reject', 'challenge', 'undermine',
+];
+
+export const MECHANISM_KEYWORDS = [
+  'link breaks', 'no link', 'no mechanism', 'mechanism fails',
+  'doesn\'t lead to', 'doesn\'t cause', 'causal', 'no reason why',
+  'why would', 'how does', 'doesn\'t follow', 'non-sequitur',
+  'no evidence', 'assertion', 'unsubstantiated',
+];
+
+export const IMPACT_KEYWORDS = [
+  'even if', 'so what', 'doesn\'t matter', 'negligible',
+  'outweigh', 'outweighs', 'not significant', 'marginal',
+  'minor impact', 'small harm', 'low magnitude', 'who cares',
+  'no real impact', 'scale is small', 'limited effect',
 ];

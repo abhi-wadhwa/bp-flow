@@ -337,7 +337,7 @@ export default function AdjudicationPanel({
                             borderLeft: `2px solid ${TEAM_COLORS[team]}`,
                           }}
                         >
-                          {arg.speaker}: {arg.text}
+                          {arg.speaker}: {arg.claim || arg.text}
                         </div>
                       ))}
                     </div>

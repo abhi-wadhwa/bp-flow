@@ -1,9 +1,47 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { TEAM_COLORS } from './constants';
+import { TEAM_COLORS, REBUTTAL_COLORS } from './constants';
+
+const NODE_W = 220;
+const NODE_BASE_H = 40;
+const NODE_ROW_H = 16;
+const H_SPACING = 260;
+const V_SPACING = 100;
 
 function getThemeColor(index) {
   const palette = ['#3B82F6', '#EF4444', '#22C55E', '#F59E0B', '#8B5CF6', '#06B6D4', '#EC4899', '#F97316'];
   return palette[index % palette.length];
+}
+
+function getNodeHeight(arg) {
+  let h = NODE_BASE_H;
+  if (arg.mechanism) h += NODE_ROW_H;
+  if (arg.impact) h += NODE_ROW_H;
+  return h;
+}
+
+function getTargetYOffset(arg, rebuttalTarget) {
+  // Returns the y offset within the node where the connection should point
+  const claimY = 30; // claim row center
+  if (!rebuttalTarget || rebuttalTarget === 'claim') return claimY;
+
+  if (rebuttalTarget === 'mechanism') {
+    if (arg.mechanism) return NODE_BASE_H + 8;
+    return claimY; // fallback
+  }
+
+  if (rebuttalTarget === 'impact') {
+    let y = NODE_BASE_H;
+    if (arg.mechanism) y += NODE_ROW_H;
+    if (arg.impact) return y + 8;
+    return claimY; // fallback
+  }
+
+  return claimY;
+}
+
+function truncate(text, max) {
+  if (!text) return '';
+  return text.length > max ? text.slice(0, max) + '...' : text;
 }
 
 export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
@@ -35,13 +73,11 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
     const chainMap = {};
     const nonNoteArgs = args.filter(a => !a.isJudgeNote);
 
-    // Find root args (not responding to anything or responding to something in a different theme)
     for (const arg of nonNoteArgs) {
       if (!arg.respondsTo) {
         const theme = arg.clashTheme || 'Uncategorized';
         if (!chainMap[theme]) chainMap[theme] = [];
         const chain = [arg];
-        // Find all responses
         let current = arg;
         const visited = new Set([arg.id]);
         while (true) {
@@ -57,7 +93,6 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
       }
     }
 
-    // Also add standalone args that respond to something but aren't in a chain
     for (const arg of nonNoteArgs) {
       if (arg.respondsTo) {
         const theme = arg.clashTheme || 'Uncategorized';
@@ -85,19 +120,22 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
       let chainY = clusterY + 50;
 
       for (const chain of themeChains) {
+        let maxH = 0;
         for (let i = 0; i < chain.length; i++) {
           const arg = chain[i];
+          const h = getNodeHeight(arg);
+          if (h > maxH) maxH = h;
           if (!positions[arg.id]) {
             positions[arg.id] = {
-              x: 60 + i * 200,
+              x: 60 + i * H_SPACING,
               y: chainY,
             };
           }
         }
-        chainY += 80;
+        chainY += Math.max(maxH, NODE_BASE_H) + (V_SPACING - NODE_BASE_H);
       }
 
-      // Standalone args in theme with no chains
+      // Standalone args
       const themeArgs = themes[theme] || [];
       for (const arg of themeArgs) {
         if (!positions[arg.id]) {
@@ -105,7 +143,7 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
             x: 60,
             y: chainY,
           };
-          chainY += 80;
+          chainY += getNodeHeight(arg) + (V_SPACING - NODE_BASE_H);
         }
       }
 
@@ -113,7 +151,6 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
     }
 
     setNodePositions(prev => {
-      // Preserve manually dragged positions
       const merged = { ...positions };
       for (const [id, pos] of Object.entries(prev)) {
         if (prev[id]?.dragged) {
@@ -129,7 +166,6 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
     const chain = new Set();
     const nonNoteArgs = args.filter(a => !a.isJudgeNote);
 
-    // Walk up
     let current = nonNoteArgs.find(a => a.id === nodeId);
     while (current) {
       chain.add(current.id);
@@ -140,7 +176,6 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
       }
     }
 
-    // Walk down from nodeId
     current = nonNoteArgs.find(a => a.id === nodeId);
     const queue = [current];
     while (queue.length > 0) {
@@ -185,9 +220,16 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
     );
   }, [args]);
 
+  // Build a map from arg id to arg for quick lookups
+  const argMap = useMemo(() => {
+    const m = {};
+    for (const a of args) m[a.id] = a;
+    return m;
+  }, [args]);
+
   const totalHeight = Math.max(
     600,
-    Math.max(...Object.values(nodePositions).map(p => p.y), 0) + 150
+    Math.max(...Object.values(nodePositions).map(p => p.y), 0) + 200
   );
 
   return (
@@ -206,9 +248,52 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
           height={totalHeight}
           style={{ minHeight: '100%' }}
         >
+          {/* Arrow marker definitions - one per rebuttal type */}
+          <defs>
+            <marker
+              id="arrow-claim"
+              markerWidth="8"
+              markerHeight="6"
+              refX="8"
+              refY="3"
+              orient="auto"
+            >
+              <polygon points="0 0, 8 3, 0 6" fill={REBUTTAL_COLORS.claim} />
+            </marker>
+            <marker
+              id="arrow-mechanism"
+              markerWidth="8"
+              markerHeight="6"
+              refX="8"
+              refY="3"
+              orient="auto"
+            >
+              <polygon points="0 0, 8 3, 0 6" fill={REBUTTAL_COLORS.mechanism} />
+            </marker>
+            <marker
+              id="arrow-impact"
+              markerWidth="8"
+              markerHeight="6"
+              refX="8"
+              refY="3"
+              orient="auto"
+            >
+              <polygon points="0 0, 8 3, 0 6" fill={REBUTTAL_COLORS.impact} />
+            </marker>
+            <marker
+              id="arrow-default"
+              markerWidth="8"
+              markerHeight="6"
+              refX="8"
+              refY="3"
+              orient="auto"
+            >
+              <polygon points="0 0, 8 3, 0 6" fill="#2e3245" />
+            </marker>
+          </defs>
+
           {/* Theme labels */}
           {(() => {
-            let labelY = 25;
             return themeNames.map((theme, ti) => {
               const themeArgs = themes[theme] || [];
               const positions = themeArgs
@@ -220,7 +305,6 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
 
               return (
                 <g key={theme}>
-                  {/* Theme label */}
                   <text
                     x={16}
                     y={minY - 15}
@@ -241,44 +325,54 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
             });
           })()}
 
-          {/* Connection lines */}
+          {/* Connection lines (curved beziers) */}
           {args.filter(a => a.respondsTo && !a.isJudgeNote).map(arg => {
-            const from = nodePositions[arg.respondsTo];
-            const to = nodePositions[arg.id];
-            if (!from || !to) return null;
+            const fromPos = nodePositions[arg.respondsTo];
+            const toPos = nodePositions[arg.id];
+            if (!fromPos || !toPos) return null;
+
+            const targetArg = argMap[arg.respondsTo];
+            const rebuttalTarget = arg.rebuttalTarget || 'claim';
+            const lineColor = REBUTTAL_COLORS[rebuttalTarget] || REBUTTAL_COLORS.claim;
+            const markerId = `arrow-${rebuttalTarget in REBUTTAL_COLORS ? rebuttalTarget : 'default'}`;
+
+            // Compute y offset for the target row
+            const targetYOffset = targetArg
+              ? getTargetYOffset(targetArg, rebuttalTarget)
+              : 20;
+
+            const fromNodeH = targetArg ? getNodeHeight(targetArg) : NODE_BASE_H;
+            const toNodeH = getNodeHeight(arg);
+
+            const x1 = fromPos.x + NODE_W;
+            const y1 = fromPos.y + targetYOffset;
+            const x2 = toPos.x;
+            const y2 = toPos.y + toNodeH / 2;
+
+            // Cubic bezier control points
+            const dx = Math.abs(x2 - x1);
+            const cpOffset = Math.max(40, dx * 0.35);
+            const cp1x = x1 + cpOffset;
+            const cp1y = y1;
+            const cp2x = x2 - cpOffset;
+            const cp2y = y2;
 
             const isHighlighted = selectedChain && selectedChain.has(arg.id);
             const dimmed = selectedChain && !isHighlighted;
 
             return (
               <g key={`line-${arg.id}`}>
-                <line
-                  x1={from.x + 160}
-                  y1={from.y + 20}
-                  x2={to.x}
-                  y2={to.y + 20}
-                  stroke={isHighlighted ? '#e2e8f0' : '#2e3245'}
-                  strokeWidth={isHighlighted ? 2 : 1}
-                  opacity={dimmed ? 0.2 : 1}
-                  markerEnd="url(#arrowhead)"
+                <path
+                  d={`M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`}
+                  fill="none"
+                  stroke={isHighlighted ? '#e2e8f0' : lineColor}
+                  strokeWidth={isHighlighted ? 2 : 1.5}
+                  opacity={dimmed ? 0.15 : 0.7}
+                  markerEnd={`url(#${markerId})`}
                 />
               </g>
             );
           })}
-
-          {/* Arrow marker */}
-          <defs>
-            <marker
-              id="arrowhead"
-              markerWidth="8"
-              markerHeight="6"
-              refX="8"
-              refY="3"
-              orient="auto"
-            >
-              <polygon points="0 0, 8 3, 0 6" fill="#2e3245" />
-            </marker>
-          </defs>
 
           {/* Argument nodes */}
           {args.filter(a => !a.isJudgeNote).map(arg => {
@@ -289,6 +383,17 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
             const isDropped = droppedIds.has(arg.id);
             const isHighlighted = selectedChain && selectedChain.has(arg.id);
             const dimmed = selectedChain && !isHighlighted;
+            const nodeH = getNodeHeight(arg);
+
+            const claimText = truncate(arg.claim || arg.text, 30);
+            const mechText = arg.mechanism ? truncate(arg.mechanism, 28) : null;
+            const impactText = arg.impact ? truncate(arg.impact, 28) : null;
+
+            // Build tooltip text
+            const tooltipParts = [arg.claim || arg.text];
+            if (arg.mechanism) tooltipParts.push(`Mechanism: ${arg.mechanism}`);
+            if (arg.impact) tooltipParts.push(`Impact: ${arg.impact}`);
+            const tooltipText = tooltipParts.join('\n');
 
             return (
               <g
@@ -299,9 +404,12 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                 style={{ cursor: 'pointer' }}
                 opacity={dimmed ? 0.25 : 1}
               >
+                <title>{tooltipText}</title>
+
+                {/* Node background */}
                 <rect
-                  width={160}
-                  height={40}
+                  width={NODE_W}
+                  height={nodeH}
                   rx={6}
                   fill="#222533"
                   stroke={isHighlighted ? '#e2e8f0' : color}
@@ -313,11 +421,12 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                   x={0}
                   y={0}
                   width={4}
-                  height={40}
+                  height={nodeH}
                   rx={3}
                   fill={color}
                 />
-                {/* Speaker label */}
+
+                {/* Header row: Speaker + badges */}
                 <text
                   x={12}
                   y={14}
@@ -328,10 +437,9 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                 >
                   {arg.speaker}
                 </text>
-                {/* Badges */}
                 {arg.isExtension && (
                   <text
-                    x={45}
+                    x={50}
                     y={14}
                     fill="#8B5CF6"
                     fontSize="8"
@@ -342,7 +450,7 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                 )}
                 {arg.isPOI && (
                   <text
-                    x={45}
+                    x={50}
                     y={14}
                     fill="#F59E0B"
                     fontSize="8"
@@ -351,10 +459,9 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                     POI
                   </text>
                 )}
-                {/* Dropped indicator */}
                 {isDropped && (
                   <text
-                    x={140}
+                    x={NODE_W - 12}
                     y={14}
                     fill="#EF4444"
                     fontSize="9"
@@ -363,7 +470,8 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                     !!
                   </text>
                 )}
-                {/* Text */}
+
+                {/* Claim row (white) */}
                 <text
                   x={12}
                   y={30}
@@ -371,8 +479,36 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                   fontSize="10"
                   fontFamily="Inter, sans-serif"
                 >
-                  {arg.text.length > 22 ? arg.text.slice(0, 22) + '...' : arg.text}
+                  {claimText}
                 </text>
+
+                {/* Mechanism row (green) */}
+                {mechText && (
+                  <text
+                    x={12}
+                    y={NODE_BASE_H + 12}
+                    fill={REBUTTAL_COLORS.mechanism}
+                    fontSize="9"
+                    fontFamily="Inter, sans-serif"
+                  >
+                    <tspan fontWeight="600">M: </tspan>
+                    {mechText}
+                  </text>
+                )}
+
+                {/* Impact row (rose) */}
+                {impactText && (
+                  <text
+                    x={12}
+                    y={NODE_BASE_H + (arg.mechanism ? NODE_ROW_H : 0) + 12}
+                    fill={REBUTTAL_COLORS.impact}
+                    fontSize="9"
+                    fontFamily="Inter, sans-serif"
+                  >
+                    <tspan fontWeight="600">I: </tspan>
+                    {impactText}
+                  </text>
+                )}
               </g>
             );
           })}
