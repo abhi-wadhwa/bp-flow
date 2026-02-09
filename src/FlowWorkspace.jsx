@@ -181,6 +181,8 @@ export default function FlowWorkspace({ config }) {
       const tag = e.target.tagName;
 
       if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey) {
+        // Let Tab navigate between textareas in the side panel
+        if (tag === 'TEXTAREA' || tag === 'INPUT') return;
         e.preventDefault();
         if (e.shiftKey) {
           pauseTimer(activeSpeaker);
