@@ -46,8 +46,8 @@ export default function FlowWorkspace({ config }) {
       id,
       text: argData.text,
       claim: argData.text,
-      mechanism: null,
-      impact: null,
+      mechanism: argData.mechanism || null,
+      impact: argData.impact || null,
       rebuttalTarget: null,
       speaker: speaker.role,
       team: speaker.team,
@@ -221,8 +221,10 @@ export default function FlowWorkspace({ config }) {
             setInputMode(prev => prev === 'poi' ? null : 'poi');
             break;
           case 'm':
-            e.preventDefault();
-            setInputMode(prev => prev === 'mechanism' ? null : 'mechanism');
+            if (e.shiftKey) {
+              e.preventDefault();
+              setInputMode(prev => prev === 'mechanism' ? null : 'mechanism');
+            }
             break;
           case 'i':
             e.preventDefault();

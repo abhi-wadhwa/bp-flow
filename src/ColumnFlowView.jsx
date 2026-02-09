@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import SpeakerColumn from './SpeakerColumn';
 import AIClassificationPopup from './AIClassificationPopup';
 import ManualLinkPopup from './ManualLinkPopup';
-import { TEAM_COLORS } from './constants';
+import { TEAM_COLORS, REBUTTAL_COLORS } from './constants';
 
 export default function ColumnFlowView({
   speakers,
@@ -24,32 +24,38 @@ export default function ColumnFlowView({
   onClearInputMode,
   judgeNotes,
 }) {
-  const [inputText, setInputText] = useState('');
+  const [claimText, setClaimText] = useState('');
+  const [mechText, setMechText] = useState('');
+  const [impactText, setImpactText] = useState('');
   const [poiFrom, setPoiFrom] = useState(null);
   const showPoiSelect = inputMode === 'poi' && !poiFrom;
-  const inputRef = useRef(null);
+
+  const claimRef = useRef(null);
+  const mechRef = useRef(null);
+  const impactRef = useRef(null);
 
   useEffect(() => {
     if (!showManualLink && !showPoiSelect) {
-      inputRef.current?.focus();
+      // Focus the right field based on input mode
+      if (inputMode === 'mechanism') {
+        mechRef.current?.focus();
+      } else if (inputMode === 'impact') {
+        impactRef.current?.focus();
+      } else {
+        claimRef.current?.focus();
+      }
     }
-  }, [activeSpeaker, showManualLink, showPoiSelect, pendingSuggestion]);
+  }, [activeSpeaker, showManualLink, showPoiSelect, pendingSuggestion, inputMode]);
 
   const handleSubmit = (e) => {
-    e.preventDefault();
-    const text = inputText.trim();
-    if (!text) return;
-
-    // Mechanism/impact annotation mode → annotate last arg
-    if (inputMode === 'mechanism' || inputMode === 'impact') {
-      onAnnotateLastArg(inputMode, text);
-      setInputText('');
-      onClearInputMode();
-      return;
-    }
+    if (e) e.preventDefault();
+    const claim = claimText.trim();
+    if (!claim) return;
 
     const argData = {
-      text,
+      text: claim,
+      mechanism: mechText.trim() || null,
+      impact: impactText.trim() || null,
       isPOI: inputMode === 'poi',
       poiFrom: inputMode === 'poi' ? poiFrom : null,
       isExtension: inputMode === 'extension',
@@ -57,15 +63,37 @@ export default function ColumnFlowView({
       isJudgeNote: inputMode === 'judge_note',
     };
 
-    setInputText('');
+    setClaimText('');
+    setMechText('');
+    setImpactText('');
     setPoiFrom(null);
     onClearInputMode();
     onSubmitArgument(argData);
+    // Refocus claim
+    setTimeout(() => claimRef.current?.focus(), 0);
+  };
+
+  const handleMechSubmit = () => {
+    const text = mechText.trim();
+    if (!text) return;
+    onAnnotateLastArg('mechanism', text);
+    setMechText('');
+    onClearInputMode();
+    claimRef.current?.focus();
+  };
+
+  const handleImpactSubmit = () => {
+    const text = impactText.trim();
+    if (!text) return;
+    onAnnotateLastArg('impact', text);
+    setImpactText('');
+    onClearInputMode();
+    claimRef.current?.focus();
   };
 
   const handlePoiSelect = (speakerIdx) => {
     setPoiFrom(speakers[speakerIdx].role);
-    inputRef.current?.focus();
+    claimRef.current?.focus();
   };
 
   const speaker = speakers[activeSpeaker];
@@ -74,19 +102,16 @@ export default function ColumnFlowView({
   // Get mode label
   let modeLabel = null;
   if (inputMode === 'poi') modeLabel = { text: 'POI', color: '#F59E0B', bg: '#F59E0B33' };
-  if (inputMode === 'mechanism') modeLabel = { text: 'MECH', color: '#10B981', bg: '#10B98133' };
-  if (inputMode === 'impact') modeLabel = { text: 'IMPACT', color: '#F43F5E', bg: '#F43F5E33' };
   if (inputMode === 'extension') modeLabel = { text: 'EXT', color: '#8B5CF6', bg: '#8B5CF633' };
   if (inputMode === 'weighing') modeLabel = { text: 'WEIGH', color: '#06B6D4', bg: '#06B6D433' };
   if (inputMode === 'judge_note') modeLabel = { text: 'NOTE', color: '#94a3b8', bg: '#94a3b833' };
 
-  // Get last non-judge-note argument for annotation preview
-  const lastArg = (inputMode === 'mechanism' || inputMode === 'impact')
-    ? [...args].reverse().find(a => !a.isJudgeNote)
-    : null;
+  // Check if there's a recent argument to annotate
+  const lastArg = [...args].reverse().find(a => !a.isJudgeNote);
+  const canAnnotate = !!lastArg;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full">
       {/* Columns */}
       <div className="flex-1 flex overflow-x-auto">
         {speakers.map((sp, idx) => {
@@ -100,7 +125,7 @@ export default function ColumnFlowView({
               arguments={speakerArgs}
               allArgs={args}
               onEditArg={onEditArg}
-              inputRef={idx === activeSpeaker ? inputRef : null}
+              inputRef={null}
               onClick={() => onSetActiveSpeaker(idx)}
             />
           );
@@ -149,115 +174,250 @@ export default function ColumnFlowView({
         )}
       </div>
 
-      {/* AI Classification Popup */}
-      {pendingSuggestion && (
-        <AIClassificationPopup
-          suggestion={pendingSuggestion}
-          allArgs={args}
-          onConfirm={onConfirmSuggestion}
-          onDismiss={onDismissSuggestion}
-          onManualLink={onManualLink}
-        />
-      )}
-
-      {/* Input bar */}
+      {/* Right side panel - Input */}
       <div
-        className="px-4 py-3 border-t flex-shrink-0"
-        style={{ background: '#1a1d27', borderColor: '#2e3245' }}
+        className="flex flex-col h-full border-l flex-shrink-0"
+        style={{
+          width: '300px',
+          minWidth: '300px',
+          background: '#1a1d27',
+          borderColor: '#2e3245',
+        }}
       >
-        <form onSubmit={handleSubmit} className="flex items-center gap-2">
-          {/* Speaker indicator */}
-          <div className="flex items-center gap-2 flex-shrink-0">
-            <span
-              className="w-2 h-2 rounded-full"
-              style={{ background: color }}
+        {/* Panel header: speaker + mode */}
+        <div
+          className="px-4 py-3 border-b flex-shrink-0"
+          style={{ borderColor: '#2e3245' }}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span
+                className="w-2.5 h-2.5 rounded-full"
+                style={{ background: color }}
+              />
+              <span
+                className="text-sm font-bold"
+                style={{ fontFamily: 'JetBrains Mono, monospace', color }}
+              >
+                {speaker.role}
+              </span>
+              <span className="text-xs" style={{ color: '#64748b' }}>
+                {speaker.title}
+              </span>
+            </div>
+            {modeLabel && (
+              <span
+                className="px-2 py-0.5 rounded text-[10px] font-bold"
+                style={{ background: modeLabel.bg, color: modeLabel.color }}
+              >
+                {modeLabel.text}
+                {inputMode === 'poi' && poiFrom && ` from ${poiFrom}`}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* AI Classification Popup */}
+        {pendingSuggestion && (
+          <div className="flex-shrink-0">
+            <AIClassificationPopup
+              suggestion={pendingSuggestion}
+              allArgs={args}
+              onConfirm={onConfirmSuggestion}
+              onDismiss={onDismissSuggestion}
+              onManualLink={onManualLink}
             />
-            <span
-              className="text-xs font-bold"
-              style={{ fontFamily: 'JetBrains Mono, monospace', color }}
-            >
-              {speaker.role}
-            </span>
+          </div>
+        )}
+
+        {/* Input fields */}
+        <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+          {/* Claim */}
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-wider mb-1.5 block" style={{ color: '#94a3b8' }}>
+              Claim
+            </label>
+            <textarea
+              ref={claimRef}
+              value={claimText}
+              onChange={e => setClaimText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  // If suggestion pending and claim empty → confirm
+                  if (pendingSuggestion && !claimText.trim()) {
+                    e.preventDefault();
+                    onConfirmSuggestion();
+                    return;
+                  }
+                  if (e.key === 'Enter' && claimText.trim()) {
+                    e.preventDefault();
+                    handleSubmit();
+                  }
+                }
+                if (e.key === 'Escape') {
+                  if (pendingSuggestion) {
+                    e.preventDefault();
+                    onDismissSuggestion();
+                  }
+                }
+              }}
+              placeholder={
+                pendingSuggestion
+                  ? 'Enter=confirm  Esc=dismiss  ⌘K=link'
+                  : inputMode === 'judge_note'
+                  ? 'Private judge note...'
+                  : inputMode === 'weighing'
+                  ? 'e.g., OG econ > OO rights because...'
+                  : 'What is the argument?'
+              }
+              className="w-full rounded-lg px-3 py-2.5 text-sm outline-none resize-none border transition-colors"
+              style={{
+                background: '#222533',
+                color: '#e2e8f0',
+                borderColor: pendingSuggestion ? '#22C55E55' : '#2e3245',
+                minHeight: '80px',
+              }}
+              rows={3}
+            />
           </div>
 
-          {/* Mode badge */}
-          {modeLabel && (
-            <span
-              className="px-2 py-0.5 rounded text-[10px] font-bold flex-shrink-0"
-              style={{ background: modeLabel.bg, color: modeLabel.color }}
+          {/* Mechanism */}
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-wider mb-1.5 flex items-center gap-1.5" style={{ color: REBUTTAL_COLORS.mechanism }}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: REBUTTAL_COLORS.mechanism }} />
+              Mechanism
+              <span className="font-normal" style={{ color: '#64748b' }}>— why / how</span>
+            </label>
+            <textarea
+              ref={mechRef}
+              value={mechText}
+              onChange={e => setMechText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (claimText.trim()) {
+                    // Submit everything together
+                    handleSubmit();
+                  } else if (mechText.trim() && canAnnotate) {
+                    // Annotate last argument
+                    handleMechSubmit();
+                  }
+                }
+                if (e.key === 'Escape') {
+                  claimRef.current?.focus();
+                }
+              }}
+              placeholder={canAnnotate ? 'Why does the claim work? (Enter to annotate last arg)' : 'Why does the claim work?'}
+              className="w-full rounded-lg px-3 py-2 text-xs outline-none resize-none border transition-colors"
+              style={{
+                background: '#222533',
+                color: REBUTTAL_COLORS.mechanism,
+                borderColor: inputMode === 'mechanism' ? REBUTTAL_COLORS.mechanism + '88' : '#2e3245',
+                minHeight: '52px',
+              }}
+              rows={2}
+            />
+          </div>
+
+          {/* Impact */}
+          <div>
+            <label className="text-[10px] font-semibold uppercase tracking-wider mb-1.5 flex items-center gap-1.5" style={{ color: REBUTTAL_COLORS.impact }}>
+              <span className="w-1.5 h-1.5 rounded-full" style={{ background: REBUTTAL_COLORS.impact }} />
+              Impact
+              <span className="font-normal" style={{ color: '#64748b' }}>— so what</span>
+            </label>
+            <textarea
+              ref={impactRef}
+              value={impactText}
+              onChange={e => setImpactText(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  if (claimText.trim()) {
+                    handleSubmit();
+                  } else if (impactText.trim() && canAnnotate) {
+                    handleImpactSubmit();
+                  }
+                }
+                if (e.key === 'Escape') {
+                  claimRef.current?.focus();
+                }
+              }}
+              placeholder={canAnnotate ? 'What happens as a result? (Enter to annotate last arg)' : 'What happens as a result?'}
+              className="w-full rounded-lg px-3 py-2 text-xs outline-none resize-none border transition-colors"
+              style={{
+                background: '#222533',
+                color: REBUTTAL_COLORS.impact,
+                borderColor: inputMode === 'impact' ? REBUTTAL_COLORS.impact + '88' : '#2e3245',
+                minHeight: '52px',
+              }}
+              rows={2}
+            />
+          </div>
+
+          {/* Annotating preview when mech/impact has text but no claim */}
+          {!claimText.trim() && (mechText.trim() || impactText.trim()) && lastArg && (
+            <div
+              className="px-2.5 py-2 rounded-lg text-[10px]"
+              style={{ background: '#222533', color: '#94a3b8', border: '1px dashed #2e3245' }}
             >
-              {modeLabel.text}
-              {inputMode === 'poi' && poiFrom && ` from ${poiFrom}`}
-            </span>
+              Will annotate: <span style={{ color: '#e2e8f0' }}>"{(lastArg.claim || lastArg.text).slice(0, 50)}{(lastArg.claim || lastArg.text).length > 50 ? '...' : ''}"</span>{' '}
+              <span style={{ color: TEAM_COLORS[lastArg.team] }}>({lastArg.speaker})</span>
+            </div>
           )}
 
-          {/* Input */}
-          <input
-            ref={inputRef}
-            type="text"
-            value={inputText}
-            onChange={e => setInputText(e.target.value)}
-            placeholder={
-              inputMode === 'judge_note'
-                ? 'Private judge note...'
-                : inputMode === 'weighing'
-                ? 'e.g., OG econ > OO rights because...'
-                : inputMode === 'mechanism'
-                ? 'Why/how does the claim work?'
-                : inputMode === 'impact'
-                ? 'What happens as a result?'
-                : `Flow ${speaker.role}...`
+          {/* POI speaker select */}
+          {showPoiSelect && (
+            <div
+              className="p-2.5 rounded-lg border"
+              style={{ background: '#222533', borderColor: '#2e3245' }}
+            >
+              <div className="text-xs mb-2" style={{ color: '#94a3b8' }}>
+                POI from which speaker?
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {speakers.map((sp, idx) => (
+                  <button
+                    key={sp.role}
+                    onClick={() => handlePoiSelect(idx)}
+                    className="px-2.5 py-1.5 rounded text-xs transition-colors"
+                    style={{
+                      background: `${TEAM_COLORS[sp.team]}22`,
+                      color: TEAM_COLORS[sp.team],
+                      border: `1px solid ${TEAM_COLORS[sp.team]}44`,
+                    }}
+                  >
+                    {sp.role}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Submit bar */}
+        <div
+          className="px-4 py-2.5 border-t flex-shrink-0 flex items-center justify-between"
+          style={{ borderColor: '#2e3245' }}
+        >
+          <span className="text-[10px]" style={{ color: '#64748b' }}>
+            {pendingSuggestion
+              ? '↵ confirm · esc dismiss · ⌘K link'
+              : '↵ submit · ⇧↵ newline · tab next field'
             }
-            className="flex-1 bg-transparent outline-none text-sm"
-            style={{
-              color: '#e2e8f0',
-            }}
-          />
-
-          {/* Submit hint */}
-          <span className="text-[10px] flex-shrink-0" style={{ color: '#2e3245' }}>
-            Enter to submit
           </span>
-        </form>
-
-        {/* Annotation preview for mechanism/impact */}
-        {lastArg && (
-          <div
-            className="mt-1.5 px-2 py-1.5 rounded-lg text-[10px]"
-            style={{ background: '#222533', color: '#94a3b8' }}
+          <button
+            onClick={handleSubmit}
+            disabled={!claimText.trim() && !(mechText.trim() || impactText.trim())}
+            className="px-3 py-1.5 rounded-lg text-[10px] font-semibold transition-colors"
+            style={{
+              background: claimText.trim() ? `${color}33` : '#2e3245',
+              color: claimText.trim() ? color : '#64748b',
+            }}
           >
-            Annotating: <span style={{ color: '#e2e8f0' }}>"{(lastArg.claim || lastArg.text).slice(0, 60)}{(lastArg.claim || lastArg.text).length > 60 ? '...' : ''}"</span>{' '}
-            <span style={{ color: TEAM_COLORS[lastArg.team] }}>({lastArg.speaker})</span>
-          </div>
-        )}
-
-        {/* POI speaker select */}
-        {showPoiSelect && (
-          <div
-            className="mt-2 p-2 rounded-lg border"
-            style={{ background: '#222533', borderColor: '#2e3245' }}
-          >
-            <div className="text-xs mb-1.5" style={{ color: '#94a3b8' }}>
-              POI from which speaker? (1-{speakers.length})
-            </div>
-            <div className="flex gap-1 flex-wrap">
-              {speakers.map((sp, idx) => (
-                <button
-                  key={sp.role}
-                  onClick={() => handlePoiSelect(idx)}
-                  className="px-2 py-1 rounded text-xs transition-colors"
-                  style={{
-                    background: `${TEAM_COLORS[sp.team]}22`,
-                    color: TEAM_COLORS[sp.team],
-                    border: `1px solid ${TEAM_COLORS[sp.team]}44`,
-                  }}
-                >
-                  {idx + 1}: {sp.role}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+            Submit
+          </button>
+        </div>
       </div>
 
       {/* Manual Link Popup */}
