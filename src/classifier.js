@@ -106,8 +106,9 @@ async function groqClassify(text, speaker, team, speechNumber, existingArgs, exi
   const argsSummary = existingArgs.slice(-20).map(a => ({
     id: a.id,
     text: a.claim || a.text,
-    mechanism: a.mechanism || null,
-    impact: a.impact || null,
+    mechanisms: a.mechanisms || (a.mechanism ? [a.mechanism] : []),
+    impacts: a.impacts || (a.impact ? [a.impact] : []),
+    refutations: a.refutations || [],
     speaker: a.speaker,
     team: a.team,
     theme: a.clashTheme,
@@ -147,8 +148,9 @@ Speaker: ${speaker} (${team}), Speech #${speechNumber}`;
   if (hasContext) {
     userPrompt += `\n\nRECENT ARGUMENTS:\n${argsSummary.map(a => {
       let line = `[id=${a.id}] ${a.speaker} (${a.team}): CLAIM: "${a.text}"`;
-      if (a.mechanism) line += ` | MECH: "${a.mechanism}"`;
-      if (a.impact) line += ` | IMPACT: "${a.impact}"`;
+      if (a.mechanisms.length) line += ` | MECH: ${a.mechanisms.map(m => `"${m}"`).join(', ')}`;
+      if (a.impacts.length) line += ` | IMPACT: ${a.impacts.map(m => `"${m}"`).join(', ')}`;
+      if (a.refutations.length) line += ` | REFUT: ${a.refutations.map(r => `"${r}"`).join(', ')}`;
       if (a.theme) line += ` [theme: ${a.theme}]`;
       return line;
     }).join('\n')}`;

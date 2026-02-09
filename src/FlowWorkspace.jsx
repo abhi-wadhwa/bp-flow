@@ -46,8 +46,9 @@ export default function FlowWorkspace({ config }) {
       id,
       text: argData.text,
       claim: argData.text,
-      mechanism: argData.mechanism || null,
-      impact: argData.impact || null,
+      mechanisms: argData.mechanisms || [],
+      impacts: argData.impacts || [],
+      refutations: argData.refutations || [],
       rebuttalTarget: null,
       speaker: speaker.role,
       team: speaker.team,
@@ -152,13 +153,13 @@ export default function FlowWorkspace({ config }) {
   }, []);
 
   const handleAnnotateArg = useCallback((field, text) => {
-    // Annotate the most recent non-judge-note argument
+    // Push to the array field on the most recent non-judge-note argument
     setArgs(prev => {
       const lastIdx = [...prev].reverse().findIndex(a => !a.isJudgeNote);
       if (lastIdx === -1) return prev;
       const idx = prev.length - 1 - lastIdx;
       return prev.map((a, i) =>
-        i === idx ? { ...a, [field]: text } : a
+        i === idx ? { ...a, [field]: [...(a[field] || []), text] } : a
       );
     });
   }, []);

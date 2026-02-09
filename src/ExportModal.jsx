@@ -31,12 +31,18 @@ function generateFlowText(args, speakers, motion, teamNames) {
       }
       text += line + '\n';
 
-      // Structured sub-lines for mechanism and impact
-      if (arg.mechanism) {
-        text += `    M: ${arg.mechanism}\n`;
+      // Structured sub-lines for mechanisms, impacts, refutations
+      const mechanisms = arg.mechanisms || (arg.mechanism ? [arg.mechanism] : []);
+      const impacts = arg.impacts || (arg.impact ? [arg.impact] : []);
+      const refutations = arg.refutations || [];
+      for (const m of mechanisms) {
+        text += `    M: ${m}\n`;
       }
-      if (arg.impact) {
-        text += `    I: ${arg.impact}\n`;
+      for (const imp of impacts) {
+        text += `    I: ${imp}\n`;
+      }
+      for (const r of refutations) {
+        text += `    R: ${r}\n`;
       }
     }
     text += '\n';

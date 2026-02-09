@@ -13,27 +13,32 @@ function getThemeColor(index) {
 }
 
 function getNodeHeight(arg) {
+  const mechs = arg.mechanisms || (arg.mechanism ? [arg.mechanism] : []);
+  const imps = arg.impacts || (arg.impact ? [arg.impact] : []);
+  const refs = arg.refutations || [];
   let h = NODE_BASE_H;
-  if (arg.mechanism) h += NODE_ROW_H;
-  if (arg.impact) h += NODE_ROW_H;
+  h += Math.min(mechs.length, 2) * NODE_ROW_H;
+  h += Math.min(imps.length, 2) * NODE_ROW_H;
+  h += Math.min(refs.length, 1) * NODE_ROW_H;
   return h;
 }
 
 function getTargetYOffset(arg, rebuttalTarget) {
-  // Returns the y offset within the node where the connection should point
-  const claimY = 30; // claim row center
+  const claimY = 30;
   if (!rebuttalTarget || rebuttalTarget === 'claim') return claimY;
 
+  const mechs = arg.mechanisms || (arg.mechanism ? [arg.mechanism] : []);
+  const imps = arg.impacts || (arg.impact ? [arg.impact] : []);
+
   if (rebuttalTarget === 'mechanism') {
-    if (arg.mechanism) return NODE_BASE_H + 8;
-    return claimY; // fallback
+    if (mechs.length > 0) return NODE_BASE_H + 8;
+    return claimY;
   }
 
   if (rebuttalTarget === 'impact') {
-    let y = NODE_BASE_H;
-    if (arg.mechanism) y += NODE_ROW_H;
-    if (arg.impact) return y + 8;
-    return claimY; // fallback
+    let y = NODE_BASE_H + Math.min(mechs.length, 2) * NODE_ROW_H;
+    if (imps.length > 0) return y + 8;
+    return claimY;
   }
 
   return claimY;
@@ -386,13 +391,15 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
             const nodeH = getNodeHeight(arg);
 
             const claimText = truncate(arg.claim || arg.text, 30);
-            const mechText = arg.mechanism ? truncate(arg.mechanism, 28) : null;
-            const impactText = arg.impact ? truncate(arg.impact, 28) : null;
+            const mechs = arg.mechanisms || (arg.mechanism ? [arg.mechanism] : []);
+            const imps = arg.impacts || (arg.impact ? [arg.impact] : []);
+            const refs = arg.refutations || [];
 
             // Build tooltip text
             const tooltipParts = [arg.claim || arg.text];
-            if (arg.mechanism) tooltipParts.push(`Mechanism: ${arg.mechanism}`);
-            if (arg.impact) tooltipParts.push(`Impact: ${arg.impact}`);
+            mechs.forEach(m => tooltipParts.push(`M: ${m}`));
+            imps.forEach(m => tooltipParts.push(`I: ${m}`));
+            refs.forEach(m => tooltipParts.push(`R: ${m}`));
             const tooltipText = tooltipParts.join('\n');
 
             return (
@@ -482,33 +489,55 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                   {claimText}
                 </text>
 
-                {/* Mechanism row (green) */}
-                {mechText && (
+                {/* Mechanism rows (green) */}
+                {mechs.slice(0, 2).map((m, mi) => (
                   <text
+                    key={`m-${mi}`}
                     x={12}
-                    y={NODE_BASE_H + 12}
+                    y={NODE_BASE_H + mi * NODE_ROW_H + 12}
                     fill={REBUTTAL_COLORS.mechanism}
                     fontSize="9"
                     fontFamily="Inter, sans-serif"
                   >
                     <tspan fontWeight="600">M: </tspan>
-                    {mechText}
+                    {truncate(m, 28)}
                   </text>
-                )}
+                ))}
 
-                {/* Impact row (rose) */}
-                {impactText && (
-                  <text
-                    x={12}
-                    y={NODE_BASE_H + (arg.mechanism ? NODE_ROW_H : 0) + 12}
-                    fill={REBUTTAL_COLORS.impact}
-                    fontSize="9"
-                    fontFamily="Inter, sans-serif"
-                  >
-                    <tspan fontWeight="600">I: </tspan>
-                    {impactText}
-                  </text>
-                )}
+                {/* Impact rows (rose) */}
+                {imps.slice(0, 2).map((imp, ii) => {
+                  const yOff = NODE_BASE_H + Math.min(mechs.length, 2) * NODE_ROW_H + ii * NODE_ROW_H + 12;
+                  return (
+                    <text
+                      key={`i-${ii}`}
+                      x={12}
+                      y={yOff}
+                      fill={REBUTTAL_COLORS.impact}
+                      fontSize="9"
+                      fontFamily="Inter, sans-serif"
+                    >
+                      <tspan fontWeight="600">I: </tspan>
+                      {truncate(imp, 28)}
+                    </text>
+                  );
+                })}
+
+                {/* Refutation row (amber) */}
+                {refs.length > 0 && (() => {
+                  const yOff = NODE_BASE_H + Math.min(mechs.length, 2) * NODE_ROW_H + Math.min(imps.length, 2) * NODE_ROW_H + 12;
+                  return (
+                    <text
+                      x={12}
+                      y={yOff}
+                      fill="#F59E0B"
+                      fontSize="9"
+                      fontFamily="Inter, sans-serif"
+                    >
+                      <tspan fontWeight="600">R: </tspan>
+                      {truncate(refs[0], 28)}{refs.length > 1 ? ` +${refs.length - 1}` : ''}
+                    </text>
+                  );
+                })()}
               </g>
             );
           })}

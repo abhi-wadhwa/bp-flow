@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { TEAM_COLORS, REBUTTAL_COLORS } from './constants';
 
+const REFUTATION_COLOR = '#F59E0B';
+
 export default function ArgumentCard({ arg, allArgs, onEdit, onRelink, onRetheme }) {
   const [editing, setEditing] = useState(false);
   const [editText, setEditText] = useState(arg.claim || arg.text);
@@ -23,13 +25,17 @@ export default function ArgumentCard({ arg, allArgs, onEdit, onRelink, onRetheme
     setEditing(false);
   };
 
-  // Determine rebuttal target label and color
   const rebuttalTargetLabel = arg.rebuttalTarget
     ? arg.rebuttalTarget.toUpperCase()
     : null;
   const rebuttalTargetColor = arg.rebuttalTarget
     ? REBUTTAL_COLORS[arg.rebuttalTarget] || REBUTTAL_COLORS.claim
     : null;
+
+  // Support both old single-value and new array formats
+  const mechanisms = arg.mechanisms || (arg.mechanism ? [arg.mechanism] : []);
+  const impacts = arg.impacts || (arg.impact ? [arg.impact] : []);
+  const refutations = arg.refutations || [];
 
   return (
     <div
@@ -92,33 +98,43 @@ export default function ArgumentCard({ arg, allArgs, onEdit, onRelink, onRetheme
             )}
           </div>
 
-          {/* Claim text (main) */}
-          <div
-            className="leading-relaxed"
-            style={{ color: '#e2e8f0' }}
-          >
+          {/* Claim */}
+          <div className="leading-relaxed" style={{ color: '#e2e8f0' }}>
             {arg.claim || arg.text}
           </div>
 
-          {/* Mechanism */}
-          {arg.mechanism && (
+          {/* Mechanisms */}
+          {mechanisms.map((m, i) => (
             <div
-              className="mt-1 leading-relaxed text-[11px]"
+              key={`m-${i}`}
+              className="mt-0.5 leading-relaxed text-[11px]"
               style={{ color: REBUTTAL_COLORS.mechanism }}
             >
-              <span className="font-semibold">M:</span> {arg.mechanism}
+              <span className="font-semibold">M:</span> {m}
             </div>
-          )}
+          ))}
 
-          {/* Impact */}
-          {arg.impact && (
+          {/* Impacts */}
+          {impacts.map((imp, i) => (
             <div
+              key={`i-${i}`}
               className="mt-0.5 leading-relaxed text-[11px]"
               style={{ color: REBUTTAL_COLORS.impact }}
             >
-              <span className="font-semibold">I:</span> {arg.impact}
+              <span className="font-semibold">I:</span> {imp}
             </div>
-          )}
+          ))}
+
+          {/* Refutations */}
+          {refutations.map((r, i) => (
+            <div
+              key={`r-${i}`}
+              className="mt-0.5 leading-relaxed text-[11px]"
+              style={{ color: REFUTATION_COLOR }}
+            >
+              <span className="font-semibold">R:</span> {r}
+            </div>
+          ))}
 
           {/* Response link */}
           {respondedArg && (

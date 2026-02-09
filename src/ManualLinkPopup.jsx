@@ -77,14 +77,14 @@ export default function ManualLinkPopup({ args, onSelect, onClose }) {
                   </span>
                 )}
                 {/* Structure indicators */}
-                {arg.mechanism && (
+                {(arg.mechanisms?.length > 0 || arg.mechanism) && (
                   <span
                     className="w-1.5 h-1.5 rounded-full"
                     style={{ background: REBUTTAL_COLORS.mechanism }}
                     title="Has mechanism"
                   />
                 )}
-                {arg.impact && (
+                {(arg.impacts?.length > 0 || arg.impact) && (
                   <span
                     className="w-1.5 h-1.5 rounded-full"
                     style={{ background: REBUTTAL_COLORS.impact }}
