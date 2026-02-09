@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { TEAM_COLORS, REBUTTAL_COLORS } from './constants';
 
-export default function ManualLinkPopup({ args, onSelect, onClose }) {
+export default function ManualLinkPopup({ args, pendingType, onSelect, onClose }) {
   const [search, setSearch] = useState('');
   const inputRef = useRef(null);
 
@@ -20,6 +20,14 @@ export default function ManualLinkPopup({ args, onSelect, onClose }) {
     );
   });
 
+  // Determine the semantic label based on pending type
+  const isAttach = pendingType === 'mechanism' || pendingType === 'impact';
+  const headerText = isAttach
+    ? `Select argument to attach ${pendingType} to...`
+    : pendingType === 'refutation'
+    ? 'Select argument to respond to...'
+    : 'Search arguments to link to...';
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
@@ -37,7 +45,7 @@ export default function ManualLinkPopup({ args, onSelect, onClose }) {
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search arguments to link to..."
+            placeholder={headerText}
             className="w-full bg-transparent outline-none text-sm"
             style={{ color: '#e2e8f0' }}
             onKeyDown={e => {
@@ -76,7 +84,6 @@ export default function ManualLinkPopup({ args, onSelect, onClose }) {
                     {arg.clashTheme}
                   </span>
                 )}
-                {/* Structure indicators */}
                 {(arg.mechanisms?.length > 0 || arg.mechanism) && (
                   <span
                     className="w-1.5 h-1.5 rounded-full"

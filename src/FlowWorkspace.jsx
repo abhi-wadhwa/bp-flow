@@ -5,7 +5,7 @@ import ClashMapView from './ClashMapView';
 import AdjudicationPanel from './AdjudicationPanel';
 import ExportModal from './ExportModal';
 import { useTimer } from './useTimer';
-import { classifyArgument } from './classifier';
+import { heuristicClassify, classifyArgument } from './classifier';
 
 let nextArgId = 1;
 
@@ -17,10 +17,11 @@ export default function FlowWorkspace({ config }) {
   const [judgeNotes, setJudgeNotes] = useState([]);
   const [activeSpeaker, setActiveSpeaker] = useState(0);
   const [view, setView] = useState('columns'); // 'columns' | 'clashmap' | 'adjudication'
+  const [pendingInput, setPendingInput] = useState(null); // { text, speakerIndex, speaker, team, speechNumber, isPOI, poiFrom, isExtension, isWeighing }
   const [pendingSuggestion, setPendingSuggestion] = useState(null);
-  const [pendingArgId, setPendingArgId] = useState(null);
+  const [classifying, setClassifying] = useState(false);
   const [showManualLink, setShowManualLink] = useState(false);
-  const [manualLinkTarget, setManualLinkTarget] = useState(null); // arg id to re-link
+  const [manualLinkTarget, setManualLinkTarget] = useState(null);
   const [inputMode, setInputMode] = useState(null); // 'poi' | 'extension' | 'weighing' | 'judge_note'
   const [showExport, setShowExport] = useState(false);
 
@@ -29,10 +30,11 @@ export default function FlowWorkspace({ config }) {
   // Get unique themes
   const existingThemes = [...new Set(args.map(a => a.clashTheme).filter(Boolean))];
 
-  const handleSubmitArgument = useCallback(async (argData) => {
-    if (argData.isJudgeNote) {
+  // New classify-first input flow
+  const handleSubmitInput = useCallback(async (inputData) => {
+    if (inputData.isJudgeNote) {
       setJudgeNotes(prev => [...prev, {
-        text: argData.text,
+        text: inputData.text,
         speakerIndex: activeSpeaker,
         timestamp: Date.now(),
       }]);
@@ -40,36 +42,40 @@ export default function FlowWorkspace({ config }) {
     }
 
     const speaker = speakers[activeSpeaker];
-    const id = String(nextArgId++);
-
-    const newArg = {
-      id,
-      text: argData.text,
-      claim: argData.text,
-      mechanisms: argData.mechanisms || [],
-      impacts: argData.impacts || [],
-      refutations: argData.refutations || [],
-      rebuttalTarget: null,
+    const pending = {
+      text: inputData.text,
+      speakerIndex: activeSpeaker,
       speaker: speaker.role,
       team: speaker.team,
-      speakerIndex: activeSpeaker,
       speechNumber: speaker.order,
-      isPOI: argData.isPOI || false,
-      poiFrom: argData.poiFrom || null,
-      isExtension: argData.isExtension || false,
-      isWeighing: argData.isWeighing || false,
-      isJudgeNote: false,
-      clashTheme: null,
-      respondsTo: null,
-      timestamp: Date.now(),
+      isPOI: inputData.isPOI || false,
+      poiFrom: inputData.poiFrom || null,
+      isExtension: inputData.isExtension || false,
+      isWeighing: inputData.isWeighing || false,
     };
 
-    setArgs(prev => [...prev, newArg]);
+    setPendingInput(pending);
+    setClassifying(true);
 
-    // Classify
+    // Run heuristic immediately for instant feedback
+    const heuristicResult = heuristicClassify(
+      inputData.text, args, existingThemes, speaker.team
+    );
+    setPendingSuggestion(heuristicResult);
+
+    // Auto-confirm high-confidence heuristic results
+    if (heuristicResult.confidence >= 0.85) {
+      applyClassification(pending, heuristicResult);
+      setPendingInput(null);
+      setPendingSuggestion(null);
+      setClassifying(false);
+      return;
+    }
+
+    // Fire Groq request async
     try {
-      const result = await classifyArgument(
-        argData.text,
+      const groqResult = await classifyArgument(
+        inputData.text,
         speaker.role,
         speaker.team,
         speaker.order,
@@ -77,62 +83,190 @@ export default function FlowWorkspace({ config }) {
         existingThemes
       );
 
-      if (result.confidence >= 0.3 && (result.clash_theme || result.responds_to)) {
-        setPendingSuggestion(result);
-        setPendingArgId(id);
-      } else if (result.clash_theme) {
-        // Auto-apply low confidence theme
-        setArgs(prev => prev.map(a =>
-          a.id === id ? { ...a, clashTheme: result.clash_theme } : a
-        ));
+      // Auto-confirm high-confidence Groq results
+      if (groqResult.confidence >= 0.85) {
+        applyClassification(pending, groqResult);
+        setPendingInput(null);
+        setPendingSuggestion(null);
+        setClassifying(false);
+        return;
       }
+
+      // Update popup with Groq result (better than heuristic)
+      setPendingSuggestion(groqResult);
     } catch {
-      // Classification failed silently
+      // Keep heuristic result on failure
     }
+
+    setClassifying(false);
   }, [activeSpeaker, speakers, args, existingThemes]);
 
-  const handleConfirmSuggestion = useCallback(() => {
-    if (!pendingSuggestion || !pendingArgId) return;
+  // Apply a classification result — dispatches based on argument_type
+  const applyClassification = useCallback((input, suggestion) => {
+    const argType = suggestion.argument_type || 'claim';
 
-    setArgs(prev => prev.map(a =>
-      a.id === pendingArgId
-        ? {
-            ...a,
-            clashTheme: pendingSuggestion.clash_theme || a.clashTheme,
-            respondsTo: pendingSuggestion.responds_to || a.respondsTo,
-            rebuttalTarget: pendingSuggestion.rebuttal_target || a.rebuttalTarget,
-          }
-        : a
-    ));
+    if (argType === 'mechanism' || argType === 'impact') {
+      const targetId = suggestion.belongs_to;
+      const targetArg = targetId ? args.find(a => a.id === targetId) : null;
+
+      if (targetArg) {
+        // Attach to existing argument
+        const field = argType === 'mechanism' ? 'mechanisms' : 'impacts';
+        setArgs(prev => prev.map(a =>
+          a.id === targetId
+            ? { ...a, [field]: [...(a[field] || []), input.text] }
+            : a
+        ));
+        return;
+      }
+      // Fallback: no valid target, create as claim
+    }
+
+    if (argType === 'refutation') {
+      const id = String(nextArgId++);
+      const newArg = {
+        id,
+        text: input.text,
+        claim: input.text,
+        mechanisms: [],
+        impacts: [],
+        refutations: [],
+        rebuttalTarget: suggestion.rebuttal_target || null,
+        speaker: input.speaker,
+        team: input.team,
+        speakerIndex: input.speakerIndex,
+        speechNumber: input.speechNumber,
+        isPOI: input.isPOI,
+        poiFrom: input.poiFrom,
+        isExtension: input.isExtension,
+        isWeighing: input.isWeighing,
+        isJudgeNote: false,
+        clashTheme: suggestion.clash_theme || null,
+        respondsTo: suggestion.responds_to || null,
+        timestamp: Date.now(),
+      };
+      setArgs(prev => [...prev, newArg]);
+      return;
+    }
+
+    // Default: create as new claim
+    const id = String(nextArgId++);
+    const newArg = {
+      id,
+      text: input.text,
+      claim: input.text,
+      mechanisms: [],
+      impacts: [],
+      refutations: [],
+      rebuttalTarget: null,
+      speaker: input.speaker,
+      team: input.team,
+      speakerIndex: input.speakerIndex,
+      speechNumber: input.speechNumber,
+      isPOI: input.isPOI,
+      poiFrom: input.poiFrom,
+      isExtension: input.isExtension,
+      isWeighing: input.isWeighing,
+      isJudgeNote: false,
+      clashTheme: suggestion.clash_theme || null,
+      respondsTo: null,
+      timestamp: Date.now(),
+    };
+    setArgs(prev => [...prev, newArg]);
+  }, [args]);
+
+  const handleConfirmSuggestion = useCallback(() => {
+    if (!pendingSuggestion || !pendingInput) return;
+    applyClassification(pendingInput, pendingSuggestion);
+    setPendingInput(null);
     setPendingSuggestion(null);
-    setPendingArgId(null);
-  }, [pendingSuggestion, pendingArgId]);
+  }, [pendingSuggestion, pendingInput, applyClassification]);
 
   const handleDismissSuggestion = useCallback(() => {
-    // Keep the theme but not the link
-    if (pendingSuggestion && pendingArgId) {
-      setArgs(prev => prev.map(a =>
-        a.id === pendingArgId
-          ? { ...a, clashTheme: pendingSuggestion.clash_theme || a.clashTheme }
-          : a
-      ));
-    }
+    if (!pendingInput) return;
+    // Dismiss always creates as new claim
+    applyClassification(pendingInput, {
+      argument_type: 'claim',
+      clash_theme: pendingSuggestion?.clash_theme || null,
+      belongs_to: null,
+      responds_to: null,
+      rebuttal_target: null,
+    });
+    setPendingInput(null);
     setPendingSuggestion(null);
-    setPendingArgId(null);
-  }, [pendingSuggestion, pendingArgId]);
+  }, [pendingInput, pendingSuggestion, applyClassification]);
+
+  const handleOverrideType = useCallback((newType) => {
+    if (!pendingSuggestion || !pendingInput) return;
+
+    const speaker = speakers[pendingInput.speakerIndex];
+    const updated = { ...pendingSuggestion, argument_type: newType };
+
+    // Adjust belongs_to / responds_to for consistency
+    if (newType === 'claim') {
+      updated.belongs_to = null;
+      updated.responds_to = null;
+      updated.rebuttal_target = null;
+    } else if (newType === 'mechanism' || newType === 'impact') {
+      updated.responds_to = null;
+      updated.rebuttal_target = null;
+      // Find a same-team claim if no belongs_to
+      if (!updated.belongs_to) {
+        for (let i = args.length - 1; i >= 0; i--) {
+          if (args[i].team === speaker.team && !args[i].isJudgeNote && !args[i].isPOI) {
+            updated.belongs_to = args[i].id;
+            break;
+          }
+        }
+      }
+    } else if (newType === 'refutation') {
+      updated.belongs_to = null;
+      // Keep responds_to if set, otherwise user can use manual link
+      if (!updated.responds_to) {
+        updated.rebuttal_target = null;
+      }
+    }
+
+    setPendingSuggestion(updated);
+  }, [pendingSuggestion, pendingInput, args, speakers]);
 
   const handleManualLink = useCallback(() => {
     setShowManualLink(true);
-    setManualLinkTarget(pendingArgId);
-    setPendingSuggestion(null);
-  }, [pendingArgId]);
+    // ManualLinkTarget is null — we're linking the pending input
+  }, []);
 
   const handleSelectLink = useCallback((targetArgId) => {
-    const argToLink = manualLinkTarget || pendingArgId;
-    if (argToLink) {
+    if (pendingInput && pendingSuggestion) {
+      const argType = pendingSuggestion.argument_type || 'claim';
+      const targetArg = args.find(a => a.id === targetArgId);
+
+      if (argType === 'mechanism' || argType === 'impact') {
+        setPendingSuggestion(prev => ({
+          ...prev,
+          belongs_to: targetArgId,
+          clash_theme: prev.clash_theme || targetArg?.clashTheme || null,
+        }));
+      } else if (argType === 'refutation') {
+        setPendingSuggestion(prev => ({
+          ...prev,
+          responds_to: targetArgId,
+          clash_theme: prev.clash_theme || targetArg?.clashTheme || null,
+        }));
+      } else {
+        // Claim — set as responds_to (turn it into a response)
+        setPendingSuggestion(prev => ({
+          ...prev,
+          argument_type: 'refutation',
+          responds_to: targetArgId,
+          belongs_to: null,
+          clash_theme: prev.clash_theme || targetArg?.clashTheme || null,
+        }));
+      }
+    } else if (manualLinkTarget) {
+      // Re-linking an existing arg (from clash map)
       const targetArg = args.find(a => a.id === targetArgId);
       setArgs(prev => prev.map(a =>
-        a.id === argToLink
+        a.id === manualLinkTarget
           ? {
               ...a,
               respondsTo: targetArgId,
@@ -141,27 +275,15 @@ export default function FlowWorkspace({ config }) {
           : a
       ));
     }
+
     setShowManualLink(false);
     setManualLinkTarget(null);
-    setPendingArgId(null);
-  }, [manualLinkTarget, pendingArgId, args]);
+  }, [pendingInput, pendingSuggestion, manualLinkTarget, args]);
 
   const handleEditArg = useCallback((id, newText) => {
     setArgs(prev => prev.map(a =>
       a.id === id ? { ...a, text: newText, claim: newText } : a
     ));
-  }, []);
-
-  const handleAnnotateArg = useCallback((field, text) => {
-    // Push to the array field on the most recent non-judge-note argument
-    setArgs(prev => {
-      const lastIdx = [...prev].reverse().findIndex(a => !a.isJudgeNote);
-      if (lastIdx === -1) return prev;
-      const idx = prev.length - 1 - lastIdx;
-      return prev.map((a, i) =>
-        i === idx ? { ...a, [field]: [...(a[field] || []), text] } : a
-      );
-    });
   }, []);
 
   const handleRetheme = useCallback((oldTheme, newTheme) => {
@@ -178,11 +300,9 @@ export default function FlowWorkspace({ config }) {
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Don't intercept if typing in a textarea
       const tag = e.target.tagName;
 
       if (e.key === 'Tab' && !e.metaKey && !e.ctrlKey) {
-        // Let Tab navigate between textareas in the side panel
         if (tag === 'TEXTAREA' || tag === 'INPUT') return;
         e.preventDefault();
         if (e.shiftKey) {
@@ -212,6 +332,17 @@ export default function FlowWorkspace({ config }) {
         return;
       }
 
+      // Type override shortcuts when popup is visible
+      if (pendingSuggestion && tag !== 'INPUT' && tag !== 'TEXTAREA') {
+        const typeMap = { c: 'claim', m: 'mechanism', i: 'impact', r: 'refutation' };
+        const overrideType = typeMap[e.key.toLowerCase()];
+        if (overrideType && !e.metaKey && !e.ctrlKey && !e.altKey) {
+          e.preventDefault();
+          handleOverrideType(overrideType);
+          return;
+        }
+      }
+
       // Meta/Cmd shortcuts
       if (e.metaKey || e.ctrlKey) {
         switch (e.key.toLowerCase()) {
@@ -222,16 +353,6 @@ export default function FlowWorkspace({ config }) {
           case 'p':
             e.preventDefault();
             setInputMode(prev => prev === 'poi' ? null : 'poi');
-            break;
-          case 'm':
-            if (e.shiftKey) {
-              e.preventDefault();
-              setInputMode(prev => prev === 'mechanism' ? null : 'mechanism');
-            }
-            break;
-          case 'i':
-            e.preventDefault();
-            setInputMode(prev => prev === 'impact' ? null : 'impact');
             break;
           case 'w':
             e.preventDefault();
@@ -266,7 +387,6 @@ export default function FlowWorkspace({ config }) {
           case '2':
           case '3':
           case '4':
-            // Quick rank — only in adjudication mode
             break;
         }
       }
@@ -283,7 +403,7 @@ export default function FlowWorkspace({ config }) {
   }, [
     activeSpeaker, speakers.length, pendingSuggestion, showManualLink,
     inputMode, showExport, args, pauseTimer, toggleTimer,
-    handleConfirmSuggestion, handleDismissSuggestion, handleManualLink,
+    handleConfirmSuggestion, handleDismissSuggestion, handleManualLink, handleOverrideType,
   ]);
 
   if (view === 'adjudication') {
@@ -322,19 +442,22 @@ export default function FlowWorkspace({ config }) {
             onSetActiveSpeaker={setActiveSpeaker}
             arguments={args}
             teamNames={teamNames}
-            onSubmitArgument={handleSubmitArgument}
+            onSubmitInput={handleSubmitInput}
             onEditArg={handleEditArg}
-            onAnnotateLastArg={handleAnnotateArg}
             pendingSuggestion={pendingSuggestion}
+            pendingText={pendingInput?.text || null}
+            classifying={classifying}
             onConfirmSuggestion={handleConfirmSuggestion}
             onDismissSuggestion={handleDismissSuggestion}
             onManualLink={handleManualLink}
+            onOverrideType={handleOverrideType}
             showManualLink={showManualLink}
             onCloseManualLink={() => { setShowManualLink(false); setManualLinkTarget(null); }}
             onSelectLink={handleSelectLink}
             inputMode={inputMode}
             onClearInputMode={() => setInputMode(null)}
             judgeNotes={judgeNotes}
+            pendingInputType={pendingSuggestion?.argument_type || null}
           />
         ) : (
           <ClashMapView

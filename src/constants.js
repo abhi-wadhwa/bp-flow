@@ -30,12 +30,10 @@ export const POI_START = 60; // 1 minute
 export const POI_END = 6 * 60; // 6 minutes
 
 export const SHORTCUTS = [
-  { keys: 'Enter', action: 'Submit argument' },
+  { keys: 'Enter', action: 'Submit point / confirm' },
   { keys: 'Tab', action: 'Next speaker' },
   { keys: 'Shift+Tab', action: 'Previous speaker' },
   { keys: '⌘+P', action: 'POI mode' },
-  { keys: '⌘+⇧+M', action: 'Focus mechanism field' },
-  { keys: '⌘+I', action: 'Focus impact field' },
   { keys: '⌘+W', action: 'Weighing note' },
   { keys: '⌘+E', action: 'Extension marker' },
   { keys: '⌘+K', action: 'Manual link' },
@@ -43,6 +41,7 @@ export const SHORTCUTS = [
   { keys: '⌘+J', action: 'Toggle view' },
   { keys: '⌘+T', action: 'Start/stop timer' },
   { keys: '⌘+1-4', action: 'Quick rank team' },
+  { keys: 'C/M/I/R', action: 'Override type (in popup)' },
   { keys: 'Esc', action: 'Dismiss/cancel' },
 ];
 
@@ -50,6 +49,26 @@ export const REBUTTAL_COLORS = {
   claim: '#94a3b8',
   mechanism: '#10B981',
   impact: '#F43F5E',
+};
+
+export const MECHANISM_INDICATOR_KEYWORDS = [
+  'because', 'this works by', 'the reason is', 'the link is', 'causally',
+  'the mechanism is', 'this happens through', 'the way this works',
+  'since', 'due to', 'as a result of', 'driven by', 'enabled by',
+];
+
+export const IMPACT_INDICATOR_KEYWORDS = [
+  'leading to', 'resulting in', 'this matters because', 'the harm is',
+  'the benefit is', 'consequences', 'the impact is', 'which means',
+  'therefore', 'so this causes', 'the outcome is', 'ultimately',
+  'the significance is', 'what this means is',
+];
+
+export const TYPE_COLORS = {
+  claim: '#94a3b8',
+  mechanism: '#10B981',
+  impact: '#F43F5E',
+  refutation: '#F59E0B',
 };
 
 export const RESPONSE_KEYWORDS = [
