@@ -54,7 +54,7 @@ export default function FlowWorkspace({ config }) {
       isWeighing: inputData.isWeighing || false,
     };
 
-    // Check if input is long enough to deconstruct
+    // Deconstruct: extract claim/mechanism/impact structure from any input
     if (shouldDeconstruct(inputData.text)) {
       setClassifying(true);
       try {
@@ -67,6 +67,40 @@ export default function FlowWorkspace({ config }) {
           existingThemes
         );
         if (points.length > 0) {
+          // Auto-apply trivial results: single bare claim with no M/I extracted
+          const isTrivial = points.length === 1
+            && points[0].mechanisms.length === 0
+            && points[0].impacts.length === 0;
+
+          if (isTrivial) {
+            // Still useful — we got a terse rewrite and theme. Apply directly.
+            const p = points[0];
+            const id = String(nextArgId++);
+            setArgs(prev => [...prev, {
+              id,
+              text: p.claim,
+              claim: p.claim,
+              mechanisms: [],
+              impacts: [],
+              refutations: [],
+              rebuttalTarget: p.rebuttal_target || null,
+              speaker: speaker.role,
+              team: speaker.team,
+              speakerIndex: activeSpeaker,
+              speechNumber: speaker.order,
+              isPOI: pending.isPOI,
+              poiFrom: pending.poiFrom,
+              isExtension: pending.isExtension,
+              isWeighing: pending.isWeighing,
+              isJudgeNote: false,
+              clashTheme: p.clash_theme || null,
+              respondsTo: p.responds_to || null,
+              timestamp: Date.now(),
+            }]);
+            setClassifying(false);
+            return;
+          }
+
           setPendingBatch({
             points,
             speaker: speaker.role,

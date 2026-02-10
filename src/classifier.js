@@ -308,13 +308,12 @@ Speaker: ${speaker} (${team}), Speech #${speechNumber}`;
   }
 }
 
-// Detect if input is long enough to deconstruct
+// Detect if input should be deconstructed (extract claim/mechanism/impact structure)
 export function shouldDeconstruct(text) {
+  if (!GROQ_API_KEY) return false;
   const trimmed = text.trim();
-  if (trimmed.length < 150) return false;
-  // Count sentences (rough heuristic)
-  const sentences = trimmed.split(/[.!?]+/).filter(s => s.trim().length > 10);
-  return sentences.length >= 3;
+  // Any real sentence (40+ chars) gets deconstructed
+  return trimmed.length >= 40;
 }
 
 // Deconstruct a speech/paragraph into structured arguments via Groq
@@ -334,25 +333,27 @@ export async function deconstructSpeech(text, speaker, team, speechNumber, exist
   const hasContext = existingArgs.length > 0;
   const hasThemes = existingThemes.length > 0;
 
-  const systemPrompt = `You are a debate flow analyst for British Parliamentary (BP) debate. Your job is to deconstruct a block of text from a speech into distinct, structured arguments.
+  const systemPrompt = `You are a debate flow analyst for British Parliamentary (BP) debate. Your job is to take ANY input — from a single sentence to a full speech — and extract its logical structure into claims, mechanisms, and impacts.
 
 Each argument should have:
 - claim: The core assertion, rewritten to be TERSE and clear (max 15 words). Use flowing shorthand — capture the essence, not the exact words. Write like a judge scribbling notes fast.
-- mechanisms: Array of strings explaining WHY/HOW the claim works. Each mechanism should be terse (max 15 words). Only include if the speech actually provides reasoning for this claim.
-- impacts: Array of strings explaining WHAT HAPPENS as a result. Each impact should be terse (max 15 words). Only include if the speech actually states consequences.
+- mechanisms: Array of strings explaining WHY/HOW the claim works. Each mechanism should be terse (max 15 words). Only include if the text actually provides reasoning for this claim. Look for "because", "since", "the reason is", causal explanations, or any reasoning that explains the link.
+- impacts: Array of strings explaining WHAT HAPPENS as a result. Each impact should be terse (max 15 words). Only include if the text actually states consequences. Look for "leading to", "resulting in", "this means", harms, benefits, or outcomes.
 - clash_theme: A short label (2-5 words) for the topic area.${hasThemes ? ' Reuse existing themes where appropriate.' : ''}
 - is_refutation: true if this point is attacking an opponent's argument.
 - responds_to: If is_refutation is true, the "id" of the opponent argument being attacked. null otherwise. Only use IDs from the provided list.
 - rebuttal_target: "claim", "mechanism", or "impact" — what part is being attacked. null if not a refutation.
 
 IMPORTANT RULES:
+- ALWAYS extract structure. Even a single sentence like "Free trade helps because tariffs lower, leading to GDP growth" should produce: claim="Free trade helps developing nations", mechanisms=["Lower tariffs enable cheaper imports"], impacts=["GDP growth"].
 - Be TERSE. Each claim/mechanism/impact should be 5-15 words max. Think judge shorthand, not essay prose.
 - Rewrite freely for clarity — don't quote verbatim. Capture the logical structure, not the rhetoric.
 - Identify DISTINCT arguments — don't combine unrelated points into one.
 - A single paragraph might contain one claim with multiple mechanisms, or multiple separate claims.
-- Mechanisms explain causation. Impacts explain consequences/harms/benefits.
+- Mechanisms explain causation (WHY/HOW). Impacts explain consequences/harms/benefits (SO WHAT).
 - If text discusses the same topic but from two angles, those are two separate arguments.
 - Group mechanisms and impacts under their parent claim — don't make them separate arguments.
+- If a point ONLY makes an assertion with no reasoning or consequences, return it with empty mechanisms and impacts arrays. That's fine.
 - The speaker is on team "${team}".
 
 You MUST respond with valid JSON: {"points": [...]}. No markdown, no explanation.`;
