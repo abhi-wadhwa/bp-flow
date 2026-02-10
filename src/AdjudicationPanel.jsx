@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { TEAM_COLORS } from './constants';
+import { computeDroppedIds } from './flowAnalysis';
 
 function TeamRankSlot({ rank, team, teamName, color, onDrop, onDragStart }) {
   const [dragOver, setDragOver] = useState(false);
@@ -97,11 +98,10 @@ export default function AdjudicationPanel({
     });
   };
 
-  // Dropped arguments
+  // Dropped arguments (using shared logic that skips POIs/extensions/weighing)
   const droppedArgs = useMemo(() => {
-    const nonNoteArgs = args.filter(a => !a.isJudgeNote);
-    const respondedTo = new Set(nonNoteArgs.map(a => a.respondsTo).filter(Boolean));
-    return nonNoteArgs.filter(a => !respondedTo.has(a.id));
+    const droppedIds = computeDroppedIds(args);
+    return args.filter(a => droppedIds.has(a.id));
   }, [args]);
 
   const droppedByTeam = useMemo(() => {

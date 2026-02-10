@@ -435,6 +435,123 @@ You MUST respond with valid JSON: {"points": [...]}. No markdown, no explanation
   }
 }
 
+// AI-powered clash flow analysis
+export async function analyzeClashFlow(args, themes) {
+  if (!GROQ_API_KEY) {
+    throw new Error('Groq API key required for flow analysis');
+  }
+
+  const nonNoteArgs = args.filter(a => !a.isJudgeNote);
+
+  const argsSummary = nonNoteArgs.map(a => ({
+    id: a.id,
+    claim: a.claim || a.text,
+    mechanisms: a.mechanisms || (a.mechanism ? [a.mechanism] : []),
+    impacts: a.impacts || (a.impact ? [a.impact] : []),
+    refutations: a.refutations || [],
+    speaker: a.speaker,
+    team: a.team,
+    theme: a.clashTheme,
+    responds_to: a.respondsTo || null,
+    is_poi: !!a.isPOI,
+    is_extension: !!a.isExtension,
+  }));
+
+  const systemPrompt = `You are an expert British Parliamentary debate adjudicator analyzing the flow of a round. You will receive all arguments organized by clash themes and must provide a comprehensive analysis.
+
+Your analysis must include:
+
+1. **theme_verdicts**: For each clash theme, determine which side is winning and why.
+   - winning_side: "gov" (OG+CG teams), "opp" (OO+CO teams), or "even"
+   - explanation: 1-2 sentences explaining why that side is ahead in this clash
+
+2. **dropped_arguments**: Identify genuinely important arguments that the opposing side failed to address.
+   - Only flag arguments where the opposing side had a chance to respond (i.e., spoke after) but didn't
+   - Skip POIs, extensions, weighing notes — only flag substantive claims/refutations
+   - Explain why each drop matters strategically
+
+3. **interaction_labels**: Rate the quality of each response/rebuttal pair.
+   - For each argument that responds_to another, rate the interaction:
+     - "strong_rebuttal": Directly engages and significantly undermines the target
+     - "effectively_answered": Addresses the point but target still has some force
+     - "weak_response": Attempts to engage but misses the core of the argument
+     - "tangential": Barely related to the target argument
+   - Provide a brief reason for each rating
+
+4. **overall_assessment**: 2-3 sentence summary of the debate — who's winning, what the key clashes are, and what decided it.
+
+Government teams: OG (Opening Government), CG (Closing Government)
+Opposition teams: OO (Opening Opposition), CO (Closing Opposition)
+
+You MUST respond with valid JSON only. No markdown, no explanation.`;
+
+  const userPrompt = `CLASH THEMES: ${JSON.stringify(themes)}
+
+ALL ARGUMENTS:
+${argsSummary.map(a => {
+    let line = `[id=${a.id}] ${a.speaker} (${a.team}): "${a.claim}"`;
+    if (a.mechanisms.length) line += ` | MECH: ${a.mechanisms.map(m => `"${m}"`).join(', ')}`;
+    if (a.impacts.length) line += ` | IMPACT: ${a.impacts.map(m => `"${m}"`).join(', ')}`;
+    if (a.refutations.length) line += ` | REFUT: ${a.refutations.map(r => `"${r}"`).join(', ')}`;
+    if (a.theme) line += ` [theme: ${a.theme}]`;
+    if (a.responds_to) line += ` [responds_to: ${a.responds_to}]`;
+    if (a.is_poi) line += ` [POI]`;
+    if (a.is_extension) line += ` [EXTENSION]`;
+    return line;
+  }).join('\n')}
+
+Analyze this debate flow. Respond with:
+{
+  "theme_verdicts": [{"theme": "string", "winning_side": "gov"|"opp"|"even", "explanation": "string"}],
+  "dropped_arguments": [{"arg_id": "string", "claim": "string", "team": "string", "why_it_matters": "string"}],
+  "interaction_labels": [{"responder_id": "string", "target_id": "string", "label": "strong_rebuttal"|"effectively_answered"|"weak_response"|"tangential", "reason": "string"}],
+  "overall_assessment": "string"
+}`;
+
+  const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${GROQ_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.15,
+      max_completion_tokens: 3000,
+      response_format: { type: 'json_object' },
+    }),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => '');
+    console.warn(`Groq API error ${response.status}:`, errBody);
+    throw new Error(`Groq API error: ${response.status}`);
+  }
+
+  const data = await response.json();
+  const rawText = data.choices?.[0]?.message?.content || '';
+  const cleaned = rawText.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+
+  try {
+    const result = JSON.parse(cleaned);
+
+    // Validate structure
+    return {
+      theme_verdicts: Array.isArray(result.theme_verdicts) ? result.theme_verdicts : [],
+      dropped_arguments: Array.isArray(result.dropped_arguments) ? result.dropped_arguments : [],
+      interaction_labels: Array.isArray(result.interaction_labels) ? result.interaction_labels : [],
+      overall_assessment: typeof result.overall_assessment === 'string' ? result.overall_assessment : '',
+    };
+  } catch (e) {
+    console.warn('Groq flow analysis parse error:', rawText, e);
+    throw new Error('Failed to parse flow analysis result');
+  }
+}
+
 export async function classifyArgument(text, speaker, team, speechNumber, existingArgs, existingThemes) {
   console.log('[classifier] classifyArgument called, GROQ_API_KEY present:', !!GROQ_API_KEY);
   if (GROQ_API_KEY) {

@@ -1,176 +1,158 @@
 import { useMemo, useState, useRef, useEffect, useCallback } from 'react';
-import { TEAM_COLORS, REBUTTAL_COLORS } from './constants';
+import { TEAM_COLORS, REBUTTAL_COLORS, FULL_ROUND_SPEAKERS } from './constants';
+import { computeDroppedIds, estimateNodeHeight, GOV_TEAMS, OPP_TEAMS } from './flowAnalysis';
+import { analyzeClashFlow } from './classifier';
 
-const NODE_W = 220;
-const NODE_BASE_H = 40;
-const NODE_ROW_H = 16;
-const H_SPACING = 260;
-const V_SPACING = 100;
+const NODE_W = 320;
+const COL_GAP = 120;      // gap between gov and opp columns
+const THEME_GAP = 60;     // vertical gap between theme clusters
+const NODE_V_GAP = 16;    // vertical gap between nodes in a column
+const THEME_HEADER_H = 40;
+const SIDE_PADDING = 40;
+
+// Speech order lookup
+const SPEECH_ORDER = {};
+for (const sp of FULL_ROUND_SPEAKERS) {
+  SPEECH_ORDER[sp.role] = sp.order;
+}
 
 function getThemeColor(index) {
   const palette = ['#3B82F6', '#EF4444', '#22C55E', '#F59E0B', '#8B5CF6', '#06B6D4', '#EC4899', '#F97316'];
   return palette[index % palette.length];
 }
 
-function getNodeHeight(arg) {
-  const mechs = arg.mechanisms || (arg.mechanism ? [arg.mechanism] : []);
-  const imps = arg.impacts || (arg.impact ? [arg.impact] : []);
-  const refs = arg.refutations || [];
-  let h = NODE_BASE_H;
-  h += Math.min(mechs.length, 2) * NODE_ROW_H;
-  h += Math.min(imps.length, 2) * NODE_ROW_H;
-  h += Math.min(refs.length, 1) * NODE_ROW_H;
-  return h;
-}
+const INTERACTION_COLORS = {
+  strong_rebuttal: '#22C55E',
+  effectively_answered: '#3B82F6',
+  weak_response: '#F59E0B',
+  tangential: '#EF4444',
+};
 
-function getTargetYOffset(arg, rebuttalTarget) {
-  const claimY = 30;
-  if (!rebuttalTarget || rebuttalTarget === 'claim') return claimY;
+const INTERACTION_LABELS = {
+  strong_rebuttal: 'Strong',
+  effectively_answered: 'Answered',
+  weak_response: 'Weak',
+  tangential: 'Tangential',
+};
 
-  const mechs = arg.mechanisms || (arg.mechanism ? [arg.mechanism] : []);
-  const imps = arg.impacts || (arg.impact ? [arg.impact] : []);
-
-  if (rebuttalTarget === 'mechanism') {
-    if (mechs.length > 0) return NODE_BASE_H + 8;
-    return claimY;
-  }
-
-  if (rebuttalTarget === 'impact') {
-    let y = NODE_BASE_H + Math.min(mechs.length, 2) * NODE_ROW_H;
-    if (imps.length > 0) return y + 8;
-    return claimY;
-  }
-
-  return claimY;
-}
-
-function truncate(text, max) {
-  if (!text) return '';
-  return text.length > max ? text.slice(0, max) + '...' : text;
+function getSide(team) {
+  if (GOV_TEAMS.has(team)) return 'gov';
+  if (OPP_TEAMS.has(team)) return 'opp';
+  return 'gov';
 }
 
 export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
   const svgRef = useRef(null);
-  const [dragNode, setDragNode] = useState(null);
-  const [nodePositions, setNodePositions] = useState({});
   const [selectedChain, setSelectedChain] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const [renameTheme, setRenameTheme] = useState(null);
   const [renameValue, setRenameValue] = useState('');
+  const [aiAnalysis, setAiAnalysis] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState(null);
+
+  // Filter non-note args
+  const nonNoteArgs = useMemo(() => args.filter(a => !a.isJudgeNote), [args]);
 
   // Group by clash theme
   const themes = useMemo(() => {
     const themeMap = {};
-    const nonNoteArgs = args.filter(a => !a.isJudgeNote);
-
     for (const arg of nonNoteArgs) {
       const theme = arg.clashTheme || 'Uncategorized';
       if (!themeMap[theme]) themeMap[theme] = [];
       themeMap[theme].push(arg);
     }
     return themeMap;
-  }, [args]);
+  }, [nonNoteArgs]);
 
   const themeNames = Object.keys(themes);
 
-  // Build response chains
-  const chains = useMemo(() => {
-    const chainMap = {};
-    const nonNoteArgs = args.filter(a => !a.isJudgeNote);
+  // Correct dropped detection
+  const droppedIds = useMemo(() => computeDroppedIds(args), [args]);
 
-    for (const arg of nonNoteArgs) {
-      if (!arg.respondsTo) {
-        const theme = arg.clashTheme || 'Uncategorized';
-        if (!chainMap[theme]) chainMap[theme] = [];
-        const chain = [arg];
-        let current = arg;
-        const visited = new Set([arg.id]);
-        while (true) {
-          const resp = nonNoteArgs.find(
-            a => a.respondsTo === current.id && !visited.has(a.id)
-          );
-          if (!resp) break;
-          chain.push(resp);
-          visited.add(resp.id);
-          current = resp;
-        }
-        chainMap[theme].push(chain);
-      }
-    }
-
-    for (const arg of nonNoteArgs) {
-      if (arg.respondsTo) {
-        const theme = arg.clashTheme || 'Uncategorized';
-        const isInChain = Object.values(chainMap).some(
-          chains => chains.some(chain => chain.some(a => a.id === arg.id))
-        );
-        if (!isInChain) {
-          if (!chainMap[theme]) chainMap[theme] = [];
-          chainMap[theme].push([arg]);
-        }
-      }
-    }
-
-    return chainMap;
+  // Build argMap for quick lookup
+  const argMap = useMemo(() => {
+    const m = {};
+    for (const a of args) m[a.id] = a;
+    return m;
   }, [args]);
 
-  // Compute initial positions
-  useEffect(() => {
-    const positions = {};
-    let clusterY = 40;
+  // Build interaction label lookup from AI analysis
+  const interactionLabelMap = useMemo(() => {
+    if (!aiAnalysis?.interaction_labels) return {};
+    const m = {};
+    for (const il of aiAnalysis.interaction_labels) {
+      m[il.responder_id] = il;
+    }
+    return m;
+  }, [aiAnalysis]);
+
+  // Theme verdict lookup
+  const themeVerdictMap = useMemo(() => {
+    if (!aiAnalysis?.theme_verdicts) return {};
+    const m = {};
+    for (const tv of aiAnalysis.theme_verdicts) {
+      m[tv.theme] = tv;
+    }
+    return m;
+  }, [aiAnalysis]);
+
+  // Compute layout: gov-left, opp-right per theme
+  const layout = useMemo(() => {
+    const nodePositions = {};
+    const themeBounds = {};
+    let currentY = SIDE_PADDING;
+
+    const govColX = SIDE_PADDING;
+    const oppColX = SIDE_PADDING + NODE_W + COL_GAP;
 
     for (let ti = 0; ti < themeNames.length; ti++) {
       const theme = themeNames[ti];
-      const themeChains = chains[theme] || [];
-      let chainY = clusterY + 50;
-
-      for (const chain of themeChains) {
-        let maxH = 0;
-        for (let i = 0; i < chain.length; i++) {
-          const arg = chain[i];
-          const h = getNodeHeight(arg);
-          if (h > maxH) maxH = h;
-          if (!positions[arg.id]) {
-            positions[arg.id] = {
-              x: 60 + i * H_SPACING,
-              y: chainY,
-            };
-          }
-        }
-        chainY += Math.max(maxH, NODE_BASE_H) + (V_SPACING - NODE_BASE_H);
-      }
-
-      // Standalone args
       const themeArgs = themes[theme] || [];
-      for (const arg of themeArgs) {
-        if (!positions[arg.id]) {
-          positions[arg.id] = {
-            x: 60,
-            y: chainY,
-          };
-          chainY += getNodeHeight(arg) + (V_SPACING - NODE_BASE_H);
-        }
+      const themeStartY = currentY;
+
+      // Split into gov and opp, sorted by speech order
+      const govArgs = themeArgs
+        .filter(a => getSide(a.team) === 'gov')
+        .sort((a, b) => (SPEECH_ORDER[a.speaker] || 0) - (SPEECH_ORDER[b.speaker] || 0));
+      const oppArgs = themeArgs
+        .filter(a => getSide(a.team) === 'opp')
+        .sort((a, b) => (SPEECH_ORDER[a.speaker] || 0) - (SPEECH_ORDER[b.speaker] || 0));
+
+      // Layout gov column
+      let govY = themeStartY + THEME_HEADER_H;
+      for (const arg of govArgs) {
+        const h = estimateNodeHeight(arg);
+        nodePositions[arg.id] = { x: govColX, y: govY, h };
+        govY += h + NODE_V_GAP;
       }
 
-      clusterY = chainY + 40;
+      // Layout opp column
+      let oppY = themeStartY + THEME_HEADER_H;
+      for (const arg of oppArgs) {
+        const h = estimateNodeHeight(arg);
+        nodePositions[arg.id] = { x: oppColX, y: oppY, h };
+        oppY += h + NODE_V_GAP;
+      }
+
+      const clusterBottom = Math.max(govY, oppY);
+      themeBounds[theme] = {
+        top: themeStartY,
+        bottom: clusterBottom,
+        themeIndex: ti,
+      };
+
+      currentY = clusterBottom + THEME_GAP;
     }
 
-    setNodePositions(prev => {
-      const merged = { ...positions };
-      for (const [id, pos] of Object.entries(prev)) {
-        if (prev[id]?.dragged) {
-          merged[id] = pos;
-        }
-      }
-      return merged;
-    });
-  }, [args.length, themeNames.length]);
+    return { nodePositions, themeBounds, totalHeight: currentY + 100 };
+  }, [themeNames, themes]);
 
-  // Get full chain for a node
+  const { nodePositions, themeBounds, totalHeight } = layout;
+
+  // Chain highlighting
   const getChainForNode = useCallback((nodeId) => {
     const chain = new Set();
-    const nonNoteArgs = args.filter(a => !a.isJudgeNote);
-
     let current = nonNoteArgs.find(a => a.id === nodeId);
     while (current) {
       chain.add(current.id);
@@ -180,7 +162,6 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
         break;
       }
     }
-
     current = nonNoteArgs.find(a => a.id === nodeId);
     const queue = [current];
     while (queue.length > 0) {
@@ -193,9 +174,8 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
         }
       }
     }
-
     return chain;
-  }, [args]);
+  }, [nonNoteArgs]);
 
   const handleNodeClick = (argId) => {
     if (selectedChain && selectedChain.has(argId)) {
@@ -207,35 +187,24 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
 
   const handleContextMenu = (e, arg) => {
     e.preventDefault();
-    setContextMenu({
-      x: e.clientX,
-      y: e.clientY,
-      arg,
-    });
+    setContextMenu({ x: e.clientX, y: e.clientY, arg });
   };
 
-  // Determine dropped arguments
-  const droppedIds = useMemo(() => {
-    const nonNoteArgs = args.filter(a => !a.isJudgeNote);
-    const respondedTo = new Set(nonNoteArgs.map(a => a.respondsTo).filter(Boolean));
-    return new Set(
-      nonNoteArgs
-        .filter(a => !respondedTo.has(a.id) && !a.isJudgeNote)
-        .map(a => a.id)
-    );
-  }, [args]);
+  const handleAnalyzeFlow = async () => {
+    setAnalyzing(true);
+    setAnalysisError(null);
+    try {
+      const result = await analyzeClashFlow(args, themeNames);
+      setAiAnalysis(result);
+    } catch (e) {
+      console.error('Flow analysis failed:', e);
+      setAnalysisError(e.message);
+    } finally {
+      setAnalyzing(false);
+    }
+  };
 
-  // Build a map from arg id to arg for quick lookups
-  const argMap = useMemo(() => {
-    const m = {};
-    for (const a of args) m[a.id] = a;
-    return m;
-  }, [args]);
-
-  const totalHeight = Math.max(
-    600,
-    Math.max(...Object.values(nodePositions).map(p => p.y), 0) + 200
-  );
+  const svgWidth = SIDE_PADDING * 2 + NODE_W * 2 + COL_GAP;
 
   return (
     <div className="h-full overflow-auto relative" onClick={() => setContextMenu(null)}>
@@ -247,75 +216,93 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
           </div>
         </div>
       ) : (
-        <svg
-          ref={svgRef}
-          width="100%"
-          height={totalHeight}
-          style={{ minHeight: '100%' }}
-        >
-          {/* Arrow marker definitions - one per rebuttal type */}
-          <defs>
-            <marker
-              id="arrow-claim"
-              markerWidth="8"
-              markerHeight="6"
-              refX="8"
-              refY="3"
-              orient="auto"
+        <>
+          {/* Top bar: Analyze button + overall assessment */}
+          <div
+            className="sticky top-0 z-10 px-4 py-2 flex items-center gap-3 border-b"
+            style={{ background: '#0f1117', borderColor: '#2e3245' }}
+          >
+            <button
+              onClick={handleAnalyzeFlow}
+              disabled={analyzing}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex-shrink-0"
+              style={{
+                background: analyzing ? '#2e3245' : '#3B82F6',
+                color: analyzing ? '#94a3b8' : '#fff',
+                cursor: analyzing ? 'wait' : 'pointer',
+              }}
             >
-              <polygon points="0 0, 8 3, 0 6" fill={REBUTTAL_COLORS.claim} />
-            </marker>
-            <marker
-              id="arrow-mechanism"
-              markerWidth="8"
-              markerHeight="6"
-              refX="8"
-              refY="3"
-              orient="auto"
-            >
-              <polygon points="0 0, 8 3, 0 6" fill={REBUTTAL_COLORS.mechanism} />
-            </marker>
-            <marker
-              id="arrow-impact"
-              markerWidth="8"
-              markerHeight="6"
-              refX="8"
-              refY="3"
-              orient="auto"
-            >
-              <polygon points="0 0, 8 3, 0 6" fill={REBUTTAL_COLORS.impact} />
-            </marker>
-            <marker
-              id="arrow-default"
-              markerWidth="8"
-              markerHeight="6"
-              refX="8"
-              refY="3"
-              orient="auto"
-            >
-              <polygon points="0 0, 8 3, 0 6" fill="#2e3245" />
-            </marker>
-          </defs>
+              {analyzing ? 'Analyzing...' : 'Analyze Flow'}
+            </button>
+            {analysisError && (
+              <span className="text-xs" style={{ color: '#EF4444' }}>
+                {analysisError}
+              </span>
+            )}
+            {aiAnalysis?.overall_assessment && (
+              <div
+                className="flex-1 px-3 py-1.5 rounded-lg text-xs"
+                style={{ background: '#1a1d27', color: '#e2e8f0' }}
+              >
+                {aiAnalysis.overall_assessment}
+              </div>
+            )}
+          </div>
 
-          {/* Theme labels */}
-          {(() => {
-            return themeNames.map((theme, ti) => {
-              const themeArgs = themes[theme] || [];
-              const positions = themeArgs
-                .map(a => nodePositions[a.id])
-                .filter(Boolean);
-              if (positions.length === 0) return null;
-              const minY = Math.min(...positions.map(p => p.y));
+          <svg
+            ref={svgRef}
+            width={svgWidth}
+            height={Math.max(600, totalHeight)}
+            style={{ minHeight: '100%' }}
+          >
+            {/* Arrow marker definitions */}
+            <defs>
+              {['claim', 'mechanism', 'impact', 'default'].map(type => (
+                <marker
+                  key={type}
+                  id={`arrow-${type}`}
+                  markerWidth="8"
+                  markerHeight="6"
+                  refX="8"
+                  refY="3"
+                  orient="auto"
+                >
+                  <polygon
+                    points="0 0, 8 3, 0 6"
+                    fill={REBUTTAL_COLORS[type] || '#2e3245'}
+                  />
+                </marker>
+              ))}
+            </defs>
+
+            {/* Theme clusters */}
+            {themeNames.map((theme, ti) => {
+              const bounds = themeBounds[theme];
+              if (!bounds) return null;
               const themeColor = getThemeColor(ti);
+              const verdict = themeVerdictMap[theme];
 
               return (
-                <g key={theme}>
+                <g key={`theme-${theme}`}>
+                  {/* Background rect for theme cluster */}
+                  <rect
+                    x={SIDE_PADDING - 12}
+                    y={bounds.top - 4}
+                    width={NODE_W * 2 + COL_GAP + 24}
+                    height={bounds.bottom - bounds.top + 8}
+                    rx={8}
+                    fill={`${themeColor}08`}
+                    stroke={`${themeColor}20`}
+                    strokeWidth={1}
+                  />
+
+                  {/* Theme header label */}
                   <text
-                    x={16}
-                    y={minY - 15}
+                    x={SIDE_PADDING}
+                    y={bounds.top + 14}
                     fill={themeColor}
-                    fontSize="12"
-                    fontWeight="600"
+                    fontSize="13"
+                    fontWeight="700"
                     fontFamily="DM Sans, sans-serif"
                     style={{ cursor: 'pointer' }}
                     onClick={() => {
@@ -325,223 +312,286 @@ export default function ClashMapView({ arguments: args, onRetheme, onRelink }) {
                   >
                     {theme}
                   </text>
-                </g>
-              );
-            });
-          })()}
 
-          {/* Connection lines (curved beziers) */}
-          {args.filter(a => a.respondsTo && !a.isJudgeNote).map(arg => {
-            const fromPos = nodePositions[arg.respondsTo];
-            const toPos = nodePositions[arg.id];
-            if (!fromPos || !toPos) return null;
-
-            const targetArg = argMap[arg.respondsTo];
-            const rebuttalTarget = arg.rebuttalTarget || 'claim';
-            const lineColor = REBUTTAL_COLORS[rebuttalTarget] || REBUTTAL_COLORS.claim;
-            const markerId = `arrow-${rebuttalTarget in REBUTTAL_COLORS ? rebuttalTarget : 'default'}`;
-
-            // Compute y offset for the target row
-            const targetYOffset = targetArg
-              ? getTargetYOffset(targetArg, rebuttalTarget)
-              : 20;
-
-            const fromNodeH = targetArg ? getNodeHeight(targetArg) : NODE_BASE_H;
-            const toNodeH = getNodeHeight(arg);
-
-            const x1 = fromPos.x + NODE_W;
-            const y1 = fromPos.y + targetYOffset;
-            const x2 = toPos.x;
-            const y2 = toPos.y + toNodeH / 2;
-
-            // Cubic bezier control points
-            const dx = Math.abs(x2 - x1);
-            const cpOffset = Math.max(40, dx * 0.35);
-            const cp1x = x1 + cpOffset;
-            const cp1y = y1;
-            const cp2x = x2 - cpOffset;
-            const cp2y = y2;
-
-            const isHighlighted = selectedChain && selectedChain.has(arg.id);
-            const dimmed = selectedChain && !isHighlighted;
-
-            return (
-              <g key={`line-${arg.id}`}>
-                <path
-                  d={`M ${x1} ${y1} C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${x2} ${y2}`}
-                  fill="none"
-                  stroke={isHighlighted ? '#e2e8f0' : lineColor}
-                  strokeWidth={isHighlighted ? 2 : 1.5}
-                  opacity={dimmed ? 0.15 : 0.7}
-                  markerEnd={`url(#${markerId})`}
-                />
-              </g>
-            );
-          })}
-
-          {/* Argument nodes */}
-          {args.filter(a => !a.isJudgeNote).map(arg => {
-            const pos = nodePositions[arg.id];
-            if (!pos) return null;
-
-            const color = TEAM_COLORS[arg.team];
-            const isDropped = droppedIds.has(arg.id);
-            const isHighlighted = selectedChain && selectedChain.has(arg.id);
-            const dimmed = selectedChain && !isHighlighted;
-            const nodeH = getNodeHeight(arg);
-
-            const claimText = truncate(arg.claim || arg.text, 30);
-            const mechs = arg.mechanisms || (arg.mechanism ? [arg.mechanism] : []);
-            const imps = arg.impacts || (arg.impact ? [arg.impact] : []);
-            const refs = arg.refutations || [];
-
-            // Build tooltip text
-            const tooltipParts = [arg.claim || arg.text];
-            mechs.forEach(m => tooltipParts.push(`M: ${m}`));
-            imps.forEach(m => tooltipParts.push(`I: ${m}`));
-            refs.forEach(m => tooltipParts.push(`R: ${m}`));
-            const tooltipText = tooltipParts.join('\n');
-
-            return (
-              <g
-                key={arg.id}
-                transform={`translate(${pos.x}, ${pos.y})`}
-                onClick={() => handleNodeClick(arg.id)}
-                onContextMenu={e => handleContextMenu(e, arg)}
-                style={{ cursor: 'pointer' }}
-                opacity={dimmed ? 0.25 : 1}
-              >
-                <title>{tooltipText}</title>
-
-                {/* Node background */}
-                <rect
-                  width={NODE_W}
-                  height={nodeH}
-                  rx={6}
-                  fill="#222533"
-                  stroke={isHighlighted ? '#e2e8f0' : color}
-                  strokeWidth={isHighlighted ? 2 : 1}
-                  strokeDasharray={isDropped ? '4,2' : undefined}
-                />
-                {/* Team color left bar */}
-                <rect
-                  x={0}
-                  y={0}
-                  width={4}
-                  height={nodeH}
-                  rx={3}
-                  fill={color}
-                />
-
-                {/* Header row: Speaker + badges */}
-                <text
-                  x={12}
-                  y={14}
-                  fill={color}
-                  fontSize="9"
-                  fontWeight="700"
-                  fontFamily="JetBrains Mono, monospace"
-                >
-                  {arg.speaker}
-                </text>
-                {arg.isExtension && (
+                  {/* Column labels */}
                   <text
-                    x={50}
-                    y={14}
-                    fill="#8B5CF6"
-                    fontSize="8"
-                    fontFamily="DM Sans, sans-serif"
+                    x={SIDE_PADDING + NODE_W / 2}
+                    y={bounds.top + 14}
+                    fill="#3B82F6"
+                    fontSize="9"
+                    fontWeight="600"
+                    fontFamily="JetBrains Mono, monospace"
+                    textAnchor="middle"
+                    opacity={0.5}
                   >
-                    EXT
+                    GOV
                   </text>
-                )}
-                {arg.isPOI && (
                   <text
-                    x={50}
-                    y={14}
-                    fill="#F59E0B"
-                    fontSize="8"
-                    fontFamily="DM Sans, sans-serif"
-                  >
-                    POI
-                  </text>
-                )}
-                {isDropped && (
-                  <text
-                    x={NODE_W - 12}
-                    y={14}
+                    x={SIDE_PADDING + NODE_W + COL_GAP + NODE_W / 2}
+                    y={bounds.top + 14}
                     fill="#EF4444"
                     fontSize="9"
-                    textAnchor="end"
+                    fontWeight="600"
+                    fontFamily="JetBrains Mono, monospace"
+                    textAnchor="middle"
+                    opacity={0.5}
                   >
-                    !!
+                    OPP
                   </text>
-                )}
 
-                {/* Claim row (white) */}
-                <text
-                  x={12}
-                  y={30}
-                  fill="#e2e8f0"
-                  fontSize="10"
-                  fontFamily="Inter, sans-serif"
+                  {/* Theme verdict badge (from AI analysis) */}
+                  {verdict && (
+                    <foreignObject
+                      x={SIDE_PADDING + NODE_W + (COL_GAP - 100) / 2}
+                      y={bounds.bottom - 4}
+                      width={100}
+                      height={44}
+                    >
+                      <div
+                        xmlns="http://www.w3.org/1999/xhtml"
+                        style={{
+                          background: verdict.winning_side === 'gov' ? '#3B82F620' :
+                                     verdict.winning_side === 'opp' ? '#EF444420' : '#94a3b820',
+                          border: `1px solid ${verdict.winning_side === 'gov' ? '#3B82F640' :
+                                                verdict.winning_side === 'opp' ? '#EF444440' : '#94a3b840'}`,
+                          borderRadius: '6px',
+                          padding: '4px 8px',
+                          textAlign: 'center',
+                        }}
+                      >
+                        <div style={{
+                          fontSize: '10px',
+                          fontWeight: 700,
+                          color: verdict.winning_side === 'gov' ? '#3B82F6' :
+                                 verdict.winning_side === 'opp' ? '#EF4444' : '#94a3b8',
+                          fontFamily: 'JetBrains Mono, monospace',
+                        }}>
+                          {verdict.winning_side.toUpperCase()}
+                        </div>
+                        <div style={{
+                          fontSize: '8px',
+                          color: '#94a3b8',
+                          fontFamily: 'Inter, sans-serif',
+                          marginTop: '1px',
+                          lineHeight: '1.2',
+                          overflow: 'hidden',
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical',
+                        }}>
+                          {verdict.explanation}
+                        </div>
+                      </div>
+                    </foreignObject>
+                  )}
+                </g>
+              );
+            })}
+
+            {/* Connection lines (curved beziers) */}
+            {nonNoteArgs.filter(a => a.respondsTo).map(arg => {
+              const fromPos = nodePositions[arg.respondsTo];
+              const toPos = nodePositions[arg.id];
+              if (!fromPos || !toPos) return null;
+
+              const rebuttalTarget = arg.rebuttalTarget || 'claim';
+              const lineColor = REBUTTAL_COLORS[rebuttalTarget] || REBUTTAL_COLORS.claim;
+              const markerId = `arrow-${rebuttalTarget in REBUTTAL_COLORS ? rebuttalTarget : 'default'}`;
+
+              // Determine direction: gov→opp or opp→gov
+              const fromIsGov = fromPos.x < toPos.x;
+              const x1 = fromIsGov ? fromPos.x + NODE_W : fromPos.x;
+              const y1 = fromPos.y + (fromPos.h || 40) / 2;
+              const x2 = fromIsGov ? toPos.x : toPos.x + NODE_W;
+              const y2 = toPos.y + (toPos.h || 40) / 2;
+
+              const dx = Math.abs(x2 - x1);
+              const cpOffset = Math.max(40, dx * 0.35);
+              const cp1x = fromIsGov ? x1 + cpOffset : x1 - cpOffset;
+              const cp2x = fromIsGov ? x2 - cpOffset : x2 + cpOffset;
+
+              const isHighlighted = selectedChain && selectedChain.has(arg.id);
+              const dimmed = selectedChain && !isHighlighted;
+
+              // Interaction label from AI analysis
+              const interaction = interactionLabelMap[arg.id];
+              const midX = (x1 + x2) / 2;
+              const midY = (y1 + y2) / 2;
+
+              return (
+                <g key={`line-${arg.id}`}>
+                  <path
+                    d={`M ${x1} ${y1} C ${cp1x} ${y1}, ${cp2x} ${y2}, ${x2} ${y2}`}
+                    fill="none"
+                    stroke={isHighlighted ? '#e2e8f0' : lineColor}
+                    strokeWidth={isHighlighted ? 2 : 1.5}
+                    opacity={dimmed ? 0.15 : 0.7}
+                    markerEnd={`url(#${markerId})`}
+                  />
+                  {/* Interaction quality pill */}
+                  {interaction && !dimmed && (
+                    <foreignObject
+                      x={midX - 32}
+                      y={midY - 10}
+                      width={64}
+                      height={20}
+                    >
+                      <div
+                        xmlns="http://www.w3.org/1999/xhtml"
+                        title={interaction.reason}
+                        style={{
+                          background: `${INTERACTION_COLORS[interaction.label] || '#94a3b8'}25`,
+                          border: `1px solid ${INTERACTION_COLORS[interaction.label] || '#94a3b8'}50`,
+                          borderRadius: '10px',
+                          padding: '1px 6px',
+                          fontSize: '8px',
+                          fontWeight: 600,
+                          color: INTERACTION_COLORS[interaction.label] || '#94a3b8',
+                          fontFamily: 'JetBrains Mono, monospace',
+                          textAlign: 'center',
+                          whiteSpace: 'nowrap',
+                          cursor: 'help',
+                        }}
+                      >
+                        {INTERACTION_LABELS[interaction.label] || interaction.label}
+                      </div>
+                    </foreignObject>
+                  )}
+                </g>
+              );
+            })}
+
+            {/* Argument nodes using foreignObject for word-wrapped HTML */}
+            {nonNoteArgs.map(arg => {
+              const pos = nodePositions[arg.id];
+              if (!pos) return null;
+
+              const color = TEAM_COLORS[arg.team];
+              const isDropped = droppedIds.has(arg.id);
+              const isHighlighted = selectedChain && selectedChain.has(arg.id);
+              const dimmed = selectedChain && !isHighlighted;
+              const nodeH = pos.h || estimateNodeHeight(arg);
+
+              const mechs = arg.mechanisms || (arg.mechanism ? [arg.mechanism] : []);
+              const imps = arg.impacts || (arg.impact ? [arg.impact] : []);
+              const refs = arg.refutations || [];
+
+              return (
+                <g
+                  key={arg.id}
+                  opacity={dimmed ? 0.25 : 1}
                 >
-                  {claimText}
-                </text>
-
-                {/* Mechanism rows (green) */}
-                {mechs.slice(0, 2).map((m, mi) => (
-                  <text
-                    key={`m-${mi}`}
-                    x={12}
-                    y={NODE_BASE_H + mi * NODE_ROW_H + 12}
-                    fill={REBUTTAL_COLORS.mechanism}
-                    fontSize="9"
-                    fontFamily="Inter, sans-serif"
+                  <foreignObject
+                    x={pos.x}
+                    y={pos.y}
+                    width={NODE_W}
+                    height={nodeH}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => handleNodeClick(arg.id)}
+                    onContextMenu={e => handleContextMenu(e, arg)}
                   >
-                    <tspan fontWeight="600">M: </tspan>
-                    {truncate(m, 28)}
-                  </text>
-                ))}
-
-                {/* Impact rows (rose) */}
-                {imps.slice(0, 2).map((imp, ii) => {
-                  const yOff = NODE_BASE_H + Math.min(mechs.length, 2) * NODE_ROW_H + ii * NODE_ROW_H + 12;
-                  return (
-                    <text
-                      key={`i-${ii}`}
-                      x={12}
-                      y={yOff}
-                      fill={REBUTTAL_COLORS.impact}
-                      fontSize="9"
-                      fontFamily="Inter, sans-serif"
+                    <div
+                      xmlns="http://www.w3.org/1999/xhtml"
+                      style={{
+                        width: NODE_W,
+                        height: nodeH,
+                        background: '#222533',
+                        border: `${isHighlighted ? 2 : 1}px ${isDropped ? 'dashed' : 'solid'} ${isHighlighted ? '#e2e8f0' : color}`,
+                        borderRadius: '6px',
+                        borderLeft: `4px solid ${color}`,
+                        overflow: 'hidden',
+                        fontFamily: 'Inter, sans-serif',
+                        padding: '0',
+                        boxSizing: 'border-box',
+                      }}
                     >
-                      <tspan fontWeight="600">I: </tspan>
-                      {truncate(imp, 28)}
-                    </text>
-                  );
-                })}
+                      {/* Header */}
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '4px 8px 2px',
+                      }}>
+                        <span style={{
+                          color,
+                          fontSize: '9px',
+                          fontWeight: 700,
+                          fontFamily: 'JetBrains Mono, monospace',
+                        }}>
+                          {arg.speaker}
+                        </span>
+                        {arg.isExtension && (
+                          <span style={{ color: '#8B5CF6', fontSize: '8px' }}>EXT</span>
+                        )}
+                        {arg.isPOI && (
+                          <span style={{ color: '#F59E0B', fontSize: '8px' }}>POI</span>
+                        )}
+                        <span style={{ flex: 1 }} />
+                        {isDropped && (
+                          <span style={{ color: '#EF4444', fontSize: '9px', fontWeight: 700 }}>!!</span>
+                        )}
+                      </div>
 
-                {/* Refutation row (amber) */}
-                {refs.length > 0 && (() => {
-                  const yOff = NODE_BASE_H + Math.min(mechs.length, 2) * NODE_ROW_H + Math.min(imps.length, 2) * NODE_ROW_H + 12;
-                  return (
-                    <text
-                      x={12}
-                      y={yOff}
-                      fill="#F59E0B"
-                      fontSize="9"
-                      fontFamily="Inter, sans-serif"
-                    >
-                      <tspan fontWeight="600">R: </tspan>
-                      {truncate(refs[0], 28)}{refs.length > 1 ? ` +${refs.length - 1}` : ''}
-                    </text>
-                  );
-                })()}
-              </g>
-            );
-          })}
-        </svg>
+                      {/* Claim - full text, word-wrapped */}
+                      <div style={{
+                        padding: '2px 8px 4px',
+                        color: '#e2e8f0',
+                        fontSize: '11px',
+                        lineHeight: '1.4',
+                        wordWrap: 'break-word',
+                        overflowWrap: 'break-word',
+                      }}>
+                        {arg.claim || arg.text}
+                      </div>
+
+                      {/* Mechanisms - ALL shown */}
+                      {mechs.map((m, mi) => (
+                        <div key={`m-${mi}`} style={{
+                          padding: '1px 8px',
+                          color: REBUTTAL_COLORS.mechanism,
+                          fontSize: '10px',
+                          lineHeight: '1.3',
+                          wordWrap: 'break-word',
+                          overflowWrap: 'break-word',
+                        }}>
+                          <span style={{ fontWeight: 600 }}>M: </span>{m}
+                        </div>
+                      ))}
+
+                      {/* Impacts - ALL shown */}
+                      {imps.map((imp, ii) => (
+                        <div key={`i-${ii}`} style={{
+                          padding: '1px 8px',
+                          color: REBUTTAL_COLORS.impact,
+                          fontSize: '10px',
+                          lineHeight: '1.3',
+                          wordWrap: 'break-word',
+                          overflowWrap: 'break-word',
+                        }}>
+                          <span style={{ fontWeight: 600 }}>I: </span>{imp}
+                        </div>
+                      ))}
+
+                      {/* Refutations - ALL shown */}
+                      {refs.map((r, ri) => (
+                        <div key={`r-${ri}`} style={{
+                          padding: '1px 8px',
+                          color: '#F59E0B',
+                          fontSize: '10px',
+                          lineHeight: '1.3',
+                          wordWrap: 'break-word',
+                          overflowWrap: 'break-word',
+                        }}>
+                          <span style={{ fontWeight: 600 }}>R: </span>{r}
+                        </div>
+                      ))}
+                    </div>
+                  </foreignObject>
+                </g>
+              );
+            })}
+          </svg>
+        </>
       )}
 
       {/* Context menu */}
